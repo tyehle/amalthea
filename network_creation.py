@@ -1,5 +1,6 @@
 import pymongo
 import igraph
+import math
 
 # set up the connection to the db
 client = pymongo.MongoClient('163.118.78.22', 27017)
@@ -9,6 +10,7 @@ zipcodes = db.zipcodes
 
 
 # TODO: Change this crap to generate nodes based on a data set
+# TODO: Docstrings
 
 
 def time_window_graph(nodes, node_attributes, window):
@@ -102,7 +104,7 @@ def time_window_city_graph(time_window, city_names, node_limit=None):
     attributes = []
     for name, state in city_names:
         # get all the zip codes in the given city
-        zs = [z for z in zipcodes.find({'city': name, 'state': state})]
+        zs = [data for data in zipcodes.find({'city': name, 'state': state})]
 
         if len(zs) is 0:
             # print an warning and ignore this city
@@ -155,28 +157,20 @@ def within_window(time_a, time_b, window):
     return time_b - time_a <= window >= time_a - time_b
 
 
-def sequential_crime_graph(zip_limit=None, node_limit=None):
+def sequential_crime_graph(crime_window):
     """ Returns a graph where each node represents a crime, and each sequential
         crime by date is connected by an edge.
     """
 
-    if node_limit is None:
-        node_limit = 0
-
-    # get the list of all crimes within the limits
-    if zip_limit is not None:
-        if type(zip_limit) is str:
-            zip_limit = [zip_limit]
-        cs = crimes.find({'zipcode': {'$in': zip_limit}}, limit=node_limit).sort('date')
-    else:
-        cs = crimes.find(limit=node_limit).sort('date')
+    # sort the given list of crimes by date
+    crime_window = sorted(crime_window, key=lambda x: x['date'])
 
     # make a graph
     g = igraph.Graph()
 
     # iterate through the graph, linking each node to the previous one
     last_vertex = None
-    for c in cs:
+    for c in crime_window:
         g.add_vertex(**{str(k): v for k, v in c.iteritems()})
         if last_vertex is not None:
             g.add_edge(last_vertex, last_vertex+1, weight=1)
@@ -233,7 +227,7 @@ def sequential_city_graph(city_names, crime_limit=None):
     all_zips = []
     for city, state in city_names:
         # find all zip codes in the city
-        zips = [z for z in zipcodes.find({'city': city, 'state': state})]
+        zips = [data for data in zipcodes.find({'city': city, 'state': state})]
 
         if len(zips) is 0:
             # print a warning and ignore this city
@@ -298,7 +292,7 @@ def get_index_of_crime(areas, crime_in_area, crime):
     return None
 
 
-def time_distance_graph(crime_window, dist, time):
+def time_distance_crime_graph(crime_window, dist, time):
     """ Returns a graph object of crime occurrences.
 
         Creates graph of given crimes where edges arise when crimes occurred within
@@ -322,8 +316,9 @@ def time_distance_graph(crime_window, dist, time):
         Examples
         --------
         >>> import windows
+        >>> from datetime import timedelta
         >>> c = windows.crime_window(cities = ['Greensboro'], states = ['NC'], crime_types = ['Assault'])
-        >>> g = create_td_network(c, 2, datetime.timedelta(minutes = 15))
+        >>> g = time_distance_graph(c, 2, timedelta(minutes = 15))
         >>> print(g.summary())
         IGRAPH U--T 1672 104 -- + attr: date (v), latitude (v), longitude (v),
         type (v), zipcode (v)
@@ -333,7 +328,7 @@ def time_distance_graph(crime_window, dist, time):
     for crime in crime_window:
         g.add_vertices(1)
         c = g.vcount() - 1
-        g.vs[c]["date"] = crime["date"]   # Rewrite using **
+        g.vs[c]["date"] = crime["date"]   # TODO: Rewrite using **
         g.vs[c]["zipcode"] = crime["zipcode"]
         g.vs[c]["latitude"] = float(crime["latitude"])
         g.vs[c]["longitude"] = float(crime["longitude"])
@@ -374,12 +369,103 @@ def v_distance(lat1, lon1, lat2, lon2):
     """
 
     # Convert decimal degrees to radians
-    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
 
     # Haversine formula
     dlon = lon2 - lon1
     dlat = lat2 - lat1
-    a = sin(dlat/2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon/2) ** 2
-    c = 2 * asin(sqrt(a))
-    R = 3961  # Earth's radius in miles
-    return R * c
+    a = math.sin(dlat/2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2) ** 2
+    c = 2 * math.asin(math.sqrt(a))
+    r = 3961  # Earth's radius in miles
+    return abs(r * c)
+
+
+def get_graph(crime_list, crime_associated, get_id, combination_rules):
+    """ Builds a graph from a list of crimes with edges and nodes based on the
+        given rules.
+
+        The generated graph uses the data from `crime_list` to generate nodes.
+        An edge between two nodes has a weight equal to the number of
+        associated crimes in the two nodes.
+
+        Parameters
+        ----------
+        crime_list : list of dict
+            The list of crimes used to build the graph. Each crime is
+            represented as a dictionary of attributes and their values.
+        crime_associated : (dict, dict -> bool)
+            This function takes two crimes represented as dictionaries and
+            determines if they should be associated. In addition to the
+            attributes of the crimes, the dictionaries passed to this function
+            also contain the index the crimes appeared in the crime list.
+            ie. The first crime in the list would be passed as
+            {'type': 'Theft', 'index': 0}
+        get_id : (dict -> id)
+            This function should take a crime as a dictionary and return a
+            comparable id object. Any two crimes that have the same id object
+            will be represented in a single vertex.
+        combination_rules : dict
+            This dictionary defines the rules used to collapse many vertices
+            with the same id into a single vertex.
+            See igraph.Graph.contract_vertices for more info
+
+        Returns
+        -------
+        graph : igraph.Graph
+            A graph constructed using the data in `crime_list` and the rules
+            defined by the other parameters.
+
+        Notes
+        -----
+        The complexity of the algorithm is O(N^2 * k) where N is the number of
+        crimes in the crime_list, and k is the complexity of
+        `crime_associated`.
+
+        Examples
+        --------
+        >>> from windows import crime_window
+        >>> cs = crime_window(max_size=30)
+        >>> cs = sorted(cs, key=lambda c: c['date'])
+        >>> seq_g = get_graph(cs,
+        ...                   lambda a, b: abs(a['index'] - b['index']) is 1,
+        ...                   lambda c: c['type'],
+        ...                   {'type': 'first'})
+        >>> type(seq_g)
+        <class 'igraph.Graph'>
+        >>> dist_g = get_graph(cs,
+        ...                    lambda a, b: v_distance(float(a['latitude']),
+        ...                                            float(a['longitude']),
+        ...                                            float(b['latitude']),
+        ...                                            float(b['longitude'])) < 100,
+        ...                    lambda c : c['type'],
+        ...                    {'type': 'first'})
+        >>> type(dist_g)
+        <class 'igraph.Graph'>
+    """
+    # crime_list : list<crime>  (crime : map<k,v>)
+    # crime_associated : (crime+i, crime+i -> bool)  (crime+i : crime with ['index']:index)
+    # get_id : (crime -> id)  (id : obj used to identify what node a crime is in)
+    # combination_rules : map<attr,(vals -> val)>
+
+    g = igraph.Graph()
+    new_ids = []
+
+    for c in crime_list:
+        # add the new vertex
+        g.add_vertex(**{str(k): v for k, v in c.iteritems()})
+        # save the unique id of the new vertex in the list of ids
+        new_ids.append(get_id(c))
+        # add edges to the new vertex
+        for p in range(g.vcount()-1):
+            # add edges for everything that should be associated
+            if crime_associated(dict(g.vs[p].attributes(), index=p), dict(c, index=g.vcount()-1)):
+                g.add_edge(p, g.vcount()-1, weight=1)
+
+    unique_ids = list(set(new_ids))
+    id_map = {unique_ids[i]: i for i in range(len(unique_ids))}
+    indices = [id_map[new_id] for new_id in new_ids]
+
+    g.contract_vertices(indices, combination_rules)
+    g = g.simplify(combine_edges=sum)
+
+    return g

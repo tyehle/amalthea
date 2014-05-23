@@ -1,4 +1,6 @@
 from network_creation import *
+from windows import crime_window
+import datetime
 from datetime import timedelta
 import igraph
 import math
@@ -75,23 +77,37 @@ def test_sequetial_zip_graph():
     g = sequential_zip_graph(list(zips), crime_limit=3000)
     igraph.plot(g, edge_width=[math.log(w) for w in g.es['weight']])
 
-# find some city names
-window = timedelta(hours=8)
-total = 60
-cities = set()
-i = 0
-all_crimes = crimes.find()
-while len(cities) < total:
-    zip_data = zipcodes.find_one({'zip': all_crimes[i]['zipcode']}, limit=1)
-    try:
-        cities |= {(str(zip_data['city']), str(zip_data['state']))}
-    except:
-        print('No entries in zip database for {0}'.format(all_crimes[i]['zipcode']))
-    finally:
-        i += 1
 
-g = sequential_city_graph(cities, crime_limit=300000)
-g.vs['label'] = g.vs['city']
-g.vs['x'] = [float(x) for x in g.vs['longitude']]
-g.vs['y'] = [-float(y) for y in g.vs['latitude']]
-igraph.plot(g, edge_width=[math.log(w) for w in g.es['weight']])
+def test_sequential_city_graph():
+    # find some city names
+    window = timedelta(hours=8)
+    total = 60
+    cities = set()
+    i = 0
+    all_crimes = crimes.find()
+    while len(cities) < total:
+        zip_data = zipcodes.find_one({'zip': all_crimes[i]['zipcode']}, limit=1)
+        try:
+            cities |= {(str(zip_data['city']), str(zip_data['state']))}
+        except:
+            print('No entries in zip database for {0}'.format(all_crimes[i]['zipcode']))
+        finally:
+            i += 1
+
+    g = sequential_city_graph(cities, crime_limit=300000)
+    g.vs['label'] = g.vs['city']
+    g.vs['x'] = [float(x) for x in g.vs['longitude']]
+    g.vs['y'] = [-float(y) for y in g.vs['latitude']]
+    igraph.plot(g, edge_width=[math.log(w) for w in g.es['weight']])
+
+
+cs = crime_window(max_size=30)
+cs = sorted(cs, key=lambda c: c['date'])
+seq_g = get_graph(cs, lambda a, b: abs(a['index'] - b['index']) is 1, lambda c: c['type'], {'type': 'first'})
+dist_g = get_graph(cs,
+                   lambda a, b: v_distance(float(a['latitude']),
+                                           float(a['longitude']),
+                                           float(b['latitude']),
+                                           float(b['longitude'])) < 100,
+                   lambda c : c['type'],
+                   {'type': 'first'})
