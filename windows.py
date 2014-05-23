@@ -5,59 +5,85 @@ Created on Tue May 21 02:03 2014
 """
 
 from pymongo import *
-import datetime
 
 client = MongoClient('163.118.78.22', 27017)
 db = client['crimes']
 crimes = db.crimes
 zips = db.zipcodes
 
-def find_zips(field1, s1, field2 = None, s2 = None):
-    """Return list of zipcodes (as strings) that are relevant to the given field.
+def crime_window(start_date=None,
+                 end_date=None,
+                 cities=None,
+                 states=None,
+                 zipcodes=None,
+                 crime_types=None,
+                 max_size=None):
+    """ Return all crimes within the given limits.
 
-    Arguments:
-    field1, field2 -- string pertaining to a single field of the zips database
-    s1, s2 -- instance of field as string, or a list of instances"""
-    if type(s1) == str:
-        s1 = [s1]
-    if s2 != None:
-        if type(s2) == str:
-            s2 = [s2]
-        return [str(i["zip"]) for i in zips.find({field1: {'$in': s1}, field2: {'$in': s2}})]
-    return [str(i["zip"]) for i in zips.find({field1: {'$in': s1}})]
-    
+        Parameters
+        ----------
+        start_date, end_date: datetime
+            The output will contain only crimes within the given window.
+        cities, states: list
+            The output will contain only crimes in the given cities AND the
+            given states.
+        zipcodes: list
+            Output will only contain crimes in the given zipcodes. This list
+            will override any constraints specified by the list of cities and
+            states.
+        crime_types: list
+            The results will contain only crimes of the given type.
+        max_size: int
+           Limit the total number of crimes fetched from the database.
 
-def crime_window(date1, date2, z_list = None, c_list = None):
-    """Return all crimes within the given time window that ocurred in the given zipcode and were of type given.
+        Returns
+        -------
+        crimes : list
+            A list of crimes, where each crimes is a dictionary
 
-    Arguments:
-    date1 -- datetime object
-    date2 -- datetime object
-    z_list -- list of zipcodes as strings
-    c_list -- list of crimes as strings"""
-    if c_list == None and z_list == None: 
-        # return time window for all zipcodes and crime types
-        return crimes.find({"date": {"$gt": date1, "$lt": date2}})
-    elif c_list == None:
-        # return time window and zipcodes for all crimes
-        return crimes.find({"date": {"$gte": date1, "$lte": date2}, "zipcode": {"$in": z_list}})
-    elif z_list == None:
-        # return time window and crimes for all zipcodes
-        return crimes.find({"date": {"$gt": date1, "$lt": date2}, "type": {"$in": c_list}})
-    else:
-        # return crimes that satisfy all parameters
-        return crimes.find({"date": {"$gt": date1, "$lt": date2}, "type": {"$in": c_list}, "zipcode": {"$in": z_list}})
+        Examples
+        --------
+        >>> crimes = crime_window(max_size=2)
+        >>> len(crimes)
+        2
 
-def crime_window_v1(date1, date2, z_list):
-    """Return all crimes within given time window that occurred within the given zipcodes.
+        >>> from datetime import datetime
+        >>> crimes = crime_window(end_date=datetime(2009, 2, 15), start_date=datetime(2009, 2, 13))
+        >>> len(crimes)
+        21669
+    """
 
-    Arguments:
-  date1 -- datetime object
-  date2 -- datetime object such that date1 != date2
-  z_list -- list of zipcodes as strings, note: list may be empty"""
+    limits = dict()
 
-    if len(z_list) == 0: 
-      # if z_list is empty, return time window for all zipcodes
-      return crimes.find({"date": {"$gt": date1, "$lt": date2}})
-    else:
-        return crimes.find({"date": {"$gt": date1, "$lt": date2}, "zipcode": {"$in": z_list}})
+    if start_date is not None:
+        limits['date'] = {'$gte': start_date}
+
+    if end_date is not None:
+        if 'date' in limits:
+            limits['date']['$lte'] = end_date
+        else:
+            limits['date'] = {'$lte': end_date}
+
+    zips_limits = dict()
+    if cities is not None:
+        zips_limits['city'] = {'$in': cities}
+    if states is not None:
+        zips_limits['state'] = {'$in': states}
+
+    if zipcodes is not None:
+        if cities is not None or states is not None:
+            print("Warning: Overwriting city and state limitations!")
+            zips_limits = dict()
+
+        limits['zipcode'] = {'$in': zipcodes}
+
+    if len(zips_limits) is not 0:
+        limits['zipcode'] = {'$in': [str(z['zip']) for z in zips.find(zips_limits)]}
+
+    if crime_types is not None:
+        limits['type'] = {'$in': crime_types}
+
+    if max_size is None:
+        max_size = 0
+
+    return [c for c in crimes.find(limits, limit=max_size)]

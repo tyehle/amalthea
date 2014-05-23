@@ -296,3 +296,90 @@ def get_index_of_crime(areas, crime_in_area, crime):
         if crime_in_area(crime, areas[index]):
             return index
     return None
+
+
+def time_distance_graph(crime_window, dist, time):
+    """ Returns a graph object of crime occurrences.
+
+        Creates graph of given crimes where edges arise when crimes occurred within
+        dist miles of each other and within the specified time of each other.
+
+        Parameters
+        ----------
+        crime_window: list
+           List of crimes retrieved from crimes database.
+        dist: float
+            Distance of interest in miles.
+        time: datetime.timedelta
+            Time of interest in preferred units.
+
+        Returns
+        -------
+        igraph.Graph
+            Graph with vertices indicating crimes and edges indicating crimes
+            that occurred within the given time window and distance window.
+
+        Examples
+        --------
+        >>> import windows
+        >>> c = windows.crime_window(cities = ['Greensboro'], states = ['NC'], crime_types = ['Assault'])
+        >>> g = create_td_network(c, 2, datetime.timedelta(minutes = 15))
+        >>> print(g.summary())
+        IGRAPH U--T 1672 104 -- + attr: date (v), latitude (v), longitude (v),
+        type (v), zipcode (v)
+    """
+    g = igraph.Graph()
+    # Traverse crimes in window, for each crime create a vertex
+    for crime in crime_window:
+        g.add_vertices(1)
+        c = g.vcount() - 1
+        g.vs[c]["date"] = crime["date"]   # Rewrite using **
+        g.vs[c]["zipcode"] = crime["zipcode"]
+        g.vs[c]["latitude"] = float(crime["latitude"])
+        g.vs[c]["longitude"] = float(crime["longitude"])
+        g.vs[c]["type"] = crime["type"]
+        # Connect vertices within dist miles and time minutes of each other
+        for v in range(c):
+            # Calculate distance between vertex v and c
+            d_delta = v_distance(g.vs[c]["latitude"], g.vs[c]["longitude"],
+                                 g.vs[v]["latitude"], g.vs[v]["longitude"])
+            t_delta = abs(g.vs[c]["date"] - g.vs[v]["date"])
+            if d_delta <= dist and t_delta <= time:
+                g.add_edge(c, v)
+    return g
+
+
+def v_distance(lat1, lon1, lat2, lon2):
+    """ Return distance between the two given locations in miles.
+
+        Parameters
+        ----------
+        lat1, lon1, lat2, lon2: float
+            Latitude/longitude location for point 1 and point 2.
+
+        Returns
+        -------
+        float
+            Distance between point 1 and point 2 in miles.
+
+        References
+        ----------
+        Formula from: http://stackoverflow.com/questions/4913349/haversine-
+        formula-in-python-bearing-and-distance-between-two-gps-points
+
+        Examples
+        --------
+        >>> v_distance(36.876, -80.911, 32.543, -88.890)
+        543.1390838847607
+    """
+
+    # Convert decimal degrees to radians
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+
+    # Haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat/2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon/2) ** 2
+    c = 2 * asin(sqrt(a))
+    R = 3961  # Earth's radius in miles
+    return R * c
