@@ -2,7 +2,7 @@ import psycopg2
 
 db = "zipcodes"
 host = "163.118.78.22"
-user = "tyehle"
+user = "swhite"
 port = 5432
 conn = psycopg2.connect("dbname={} host={} user={}".format(db,host,user))
 cur = conn.cursor()
