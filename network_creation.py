@@ -380,7 +380,22 @@ def v_distance(lat1, lon1, lat2, lon2):
     return abs(r * c)
 
 
-def get_graph(crime_list, crime_associated, get_id, combination_rules):
+def distance_zip_graph(crime_list, distance):
+    for c in crime_list:
+        c['latitude'] = float(c['latitude'])
+        c['longitude'] = float(c['longitude'])
+    return get_graph(crime_list,
+                     lambda a, b: v_distance(a['latitude'],
+                                             a['longitude'],
+                                             b['latitude'],
+                                             b['longitude']) < distance,
+                     lambda c: c['zipcode'],
+                     {'zipcode': 'first',
+                      'latitude': 'mean',
+                      'longitude': 'mean'})
+
+
+def get_graph(crime_list, crime_associated, get_id, combination_rules, add_index=False):
     """ Builds a graph from a list of crimes with edges and nodes based on the
         given rules.
 
@@ -408,6 +423,8 @@ def get_graph(crime_list, crime_associated, get_id, combination_rules):
             This dictionary defines the rules used to collapse many vertices
             with the same id into a single vertex.
             See igraph.Graph.contract_vertices for more info
+        add_index : boolean
+            Specifies if the index is needed in the association function.
 
         Returns
         -------
@@ -429,7 +446,8 @@ def get_graph(crime_list, crime_associated, get_id, combination_rules):
         >>> seq_g = get_graph(cs,
         ...                   lambda a, b: abs(a['index'] - b['index']) is 1,
         ...                   lambda c: c['type'],
-        ...                   {'type': 'first'})
+        ...                   {'type': 'first'},
+        ...                   add_index=True)
         >>> type(seq_g)
         <class 'igraph.Graph'>
         >>> dist_g = get_graph(cs,
@@ -447,19 +465,33 @@ def get_graph(crime_list, crime_associated, get_id, combination_rules):
     # get_id : (crime -> id)  (id : obj used to identify what node a crime is in)
     # combination_rules : map<attr,(vals -> val)>
 
-    g = igraph.Graph()
+    if add_index:
+        crime_list = [dict(crime_list[i], index=i) for i in range(len(crime_list))]
+
+    edges = []
+    for i in range(len(crime_list)):
+        if i % 100 is 0:
+            print('{0} / {1}'.format(i, len(crime_list)))
+
+        # add edges to the current vertex
+        for p in range(i+1, len(crime_list)):
+            # add edges for everything that should be associated
+            if crime_associated(crime_list[p], crime_list[i]):
+                edges.append((p, i))
+
     new_ids = []
 
+    # unwrap the list of dicts to a dict with lists in it
+    node_attributes = dict()
     for c in crime_list:
-        # add the new vertex
-        g.add_vertex(**{str(k): v for k, v in c.iteritems()})
-        # save the unique id of the new vertex in the list of ids
         new_ids.append(get_id(c))
-        # add edges to the new vertex
-        for p in range(g.vcount()-1):
-            # add edges for everything that should be associated
-            if crime_associated(dict(g.vs[p].attributes(), index=p), dict(c, index=g.vcount()-1)):
-                g.add_edge(p, g.vcount()-1, weight=1)
+        for k, v in c.iteritems():
+            if str(k) in node_attributes:
+                node_attributes[str(k)].append(v)
+            else:
+                node_attributes[str(k)] = [v]
+    # construct the graph from the list of edges we have made
+    g = igraph.Graph(edges=edges, edge_attrs={'weight': [1 for _ in edges]}, vertex_attrs=node_attributes)
 
     unique_ids = list(set(new_ids))
     id_map = {unique_ids[i]: i for i in range(len(unique_ids))}
