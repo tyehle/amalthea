@@ -514,12 +514,7 @@ def get_graph(crime_list, crime_associated, get_id, combination_rules, add_index
     for attribute, function in combination_rules.iteritems():
         for i in range(len(unique_ids)):
             crimes_with_id = [crime_list[j] for j in range(len(crime_list)) if indices[j] == i]
-            if len(crimes_with_id) is 0:
-                print('No crimes found belonging to node {0}'.format(i))
-            try:
-                node_attributes[i][attribute] = function([c[attribute] for c in crimes_with_id])
-            except IndexError:
-                return crime_list, new_ids, unique_ids, indices
+            node_attributes[i][attribute] = function([c[attribute] for c in crimes_with_id])
 
     g = igraph.Graph()
     for attrs in node_attributes:
