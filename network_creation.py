@@ -1,6 +1,7 @@
 import pymongo
 import igraph
 import math
+from collections import Counter
 
 # set up the connection to the db
 client = pymongo.MongoClient('163.118.78.22', 27017)
@@ -386,6 +387,7 @@ def distance_zip_graph(crime_list, distance):
         c['longitude'] = float(c['longitude'])
     first = lambda cs: cs[0]
     mean = lambda cs: sum(cs)/float(len(cs))
+    mode = lambda cs: Counter(cs).most_common(1)[0][0]
     return get_graph(crime_list,
                      lambda a, b: v_distance(a['latitude'],
                                              a['longitude'],
@@ -394,7 +396,9 @@ def distance_zip_graph(crime_list, distance):
                      lambda c: c['zipcode'],
                      {'zipcode': first,
                       'latitude': mean,
-                      'longitude': mean})
+                      'longitude': mean,
+                      'description': len,
+                      'type': mode})
 
 
 def distance_crime_graph(crime_list, distance):
@@ -501,6 +505,9 @@ def get_graph(crime_list, crime_associated, get_id, combination_rules, add_index
 
         # add edges to the current vertex
         for p in range(i+1, len(crime_list)):
+            # don't add self edges
+            if indices[p] == indices[i]:
+                continue
             # add edges for everything that should be associated
             if crime_associated(crime_list[p], crime_list[i]):
                 edge = (indices[p], indices[i])
