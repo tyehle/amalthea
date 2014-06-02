@@ -510,7 +510,7 @@ def get_graph(crime_list, crime_associated, get_id, combination_rules, add_index
                 continue
             # add edges for everything that should be associated
             if crime_associated(crime_list[p], crime_list[i]):
-                edge = tuple(sorted([indices[p], indices[i]])
+                edge = tuple(sorted([indices[p], indices[i]]))
                 if edge in edges:
                     edges[edge] += 1
                 else:
