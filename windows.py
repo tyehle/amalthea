@@ -89,8 +89,8 @@ def crime_window(start_date=None,
     c_window = [c for c in crimes.find(limits, limit=max_size)]
 
     for c in c_window:
-        c['description'] = str(c['description'].encode('utf-8'))
-        c['address']  = str(c['address'].encode('utf8'))
+        c['description'] = c['description'].decode('utf-8')
+        c['address']  = c['address'].deocde('utf8')
         c['latitude'] = float(c['latitude'])
         c['longitude'] = float(c['longitude'])
 
