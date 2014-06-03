@@ -50,21 +50,10 @@ la = ['90001', '90002', '90003', '90004', '90005', '90006', '90007',
       '91604', '91605', '91606', '91607', '91608', '91609']
 
 # Baltimore zip codes
-balt_list = range(21201, 21232) + range(21233,21238) + range(21239,21242) + [21244] +  range(21250,21253) + range(21263,21266) + [21268] + [21270] + range(21273,21276) + range(21278,21291) + [21297, 21298]
-for i in range(len(balt_list)):
-  balt_list[i] = str(balt_list[i])
-
-def layout_position(g):
-    g.vs['x'] = [float(x) for x in g.vs['longitude']]
-    g.vs['y'] = [-float(y) for y in g.vs['latitude']]
-
-
-def get_bounds(g, max_dimension=1600):
-    xs = [float(x) for x in g.vs['longitude']]
-    ys = [-float(y) for y in g.vs['latitude']]
-    bounds = (0, 0, max(xs) - min(xs), max(ys) - min(ys))
-    scale_factor = max_dimension / max(bounds)
-    return [int(x*scale_factor) for x in bounds]
+baltimore = range(21201, 21232) + range(21233, 21238) + range(21239, 21242) + \
+    [21244] + range(21250, 21253) + range(21263, 21266) + [21268] + [21270] + \
+    range(21273, 21276) + range(21278, 21291) + [21297, 21298]
+baltimore = [str(z) for z in baltimore]
 
 
 def save_networks():
