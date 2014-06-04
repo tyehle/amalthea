@@ -319,7 +319,7 @@ def time_distance_crime_graph(crime_window, dist, time):
         >>> import windows
         >>> from datetime import timedelta
         >>> c = windows.crime_window(cities = ['Greensboro'], states = ['NC'], crime_types = ['Assault'])
-        >>> g = time_distance_graph(c, 2, timedelta(minutes = 15))
+        >>> g = time_distance_crime_graph(c, 2, timedelta(minutes = 15))
         >>> print(g.summary())
         IGRAPH U--T 1672 104 -- + attr: date (v), latitude (v), longitude (v),
         type (v), zipcode (v)

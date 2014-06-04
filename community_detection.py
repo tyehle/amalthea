@@ -27,15 +27,16 @@ def find_clusters(g):
     return comms
 
 
-def quantify_borders(shp_file):
-    temp_list = []
-    with fiona.open(shp_file) as inp:
-        for rec in inp:
-            temp_list.append(shapely.geometry.asShape(rec['geometry']))
+def _collapse_duplicate_areas(temp_list):
+    """ Collapses any duplicate areas in the given dictionary into a single
+        key with a greater weight.
 
+        Takes list<shapes>
+        Returns map<shape, int>
+    """
     # Reduce all borders to unique Polygons
     line_dict = dict()
-    while(len(temp_list) > 0):
+    while len(temp_list) > 0:
         p = temp_list.pop()
         if p.geom_type == 'Polygon':
             p = [shapely.geometry.LineString(list(p.exterior.coords))]
@@ -50,11 +51,21 @@ def quantify_borders(shp_file):
             if not exists:
                 line_dict[poly] = 1
 
+    return line_dict
 
+
+def _separate_borders(line_dict):
+    """ Separates the borders defined by the given dictionary into individual,
+        non-intersecting line segments. The value in the dictionary represents
+        the number of times the given segment appeared in the original list.
+
+        Takes map<shape, int>
+        Returns map<shape, int>
+    """
     # Assign weights
     unique_borders = dict()
     done = False
-    while(not done):
+    while not done:
         done = True
         print('{} / {}'.format(len(unique_borders), len(line_dict)))
         # iterate through the current version of line_dict
@@ -118,13 +129,39 @@ def quantify_borders(shp_file):
     return unique_borders
 
 
+def quantify_borders(shp_file):
+    """ Takes the borders in the given shape file and find the number of times
+        any segment appears.
+
+        The resulting map contains line segments as keys, and the number of
+        times that unique segment appears in the shapes in the given shape
+        file as values.
+
+        Takes string
+        Returns map<shape, int>
+    """
+    temp_list = []
+    with fiona.open(shp_file) as inp:
+        for rec in inp:
+            temp_list.append(shapely.geometry.asShape(rec['geometry']))
+
+    line_dict = _collapse_duplicate_areas(temp_list)
+
+    return _separate_borders(line_dict)
+
+
 def border_plot(shp_file):
-    m = Basemap(width = 49000, height = 38000,projection='lcc', resolution='h', lat_0 = 39.307556, lon_0 = -76.600933)
-    shp_info = m.readshapefile(shp_file, 'comm_bounds', drawbounds = False)
+    m = Basemap(width=49000,
+                height=38000,
+                projection='lcc',
+                resolution='h',
+                lat_0=39.307556,
+                lon_0=-76.600933)
+    shp_info = m.readshapefile(shp_file, 'comm_bounds', drawbounds=False)
     colormap = plt.get_cmap('winter')
     for border, shape in zip(m.comm_bounds_info, m.comm_bounds):
-        xx,yy = zip(*shape)
-        m.plot(xx,yy,linewidth = 4, color= colormap(border['weight'] / 8.0))
+        xx, yy = zip(*shape)
+        m.plot(xx, yy, linewidth=4, color=colormap(border['weight'] / 8.0))
 
     m.drawcoastlines(linewidth = 0.3)
 
