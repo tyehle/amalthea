@@ -4,12 +4,14 @@ Created on Tue May 21 02:03 2014
 @author: swhite
 """
 
-from pymongo import *
+from pymongo import MongoClient
+from shapely.geometry import asShape, Polygon
 
 client = MongoClient('163.118.78.22', 27017)
 db = client['crimes']
 crimes = db.crimes
 zips = db.zipcodes
+geom = db.geometry
 
 def crime_window(start_date=None,
                  end_date=None,
@@ -95,3 +97,10 @@ def crime_window(start_date=None,
         c['longitude'] = float(c['longitude'])
 
     return c_window
+
+def zip_box(minlat, minlon, maxlat, maxlon):
+    # Make a box
+    box = Polygon([[minlon, minlat], [maxlon, minlat], [maxlon, maxlat], [minlon, maxlat]])
+    # Traverse each zipcode and see if within/intersects box
+    z_list = [z['zip'] for z in geom.find() if asShape(z['geometry']).intersects(box)]
+    return z_list
