@@ -6,6 +6,7 @@ Created on Tue May 21 02:03 2014
 
 from pymongo import MongoClient
 from shapely.geometry import asShape, Polygon
+from unidecode import unidecode
 
 client = MongoClient('163.118.78.22', 27017)
 db = client['crimes']
@@ -91,8 +92,8 @@ def crime_window(start_date=None,
     c_window = [c for c in crimes.find(limits, limit=max_size)]
 
     for c in c_window:
-        c['description'] = c['description'].decode('utf-8')
-        c['address']  = c['address'].deocde('utf8')
+        c['description'] = unidecode(c['description'])
+        c['address'] = unidecode(c['address'])
         c['latitude'] = float(c['latitude'])
         c['longitude'] = float(c['longitude'])
 
