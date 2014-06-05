@@ -9,16 +9,23 @@ from windows import crime_window
 
 def save_networks():
     cities = json.load(open('cities.json', 'r'))
-    # grab the data we will use
-    data = crime_window(zipcodes=cities['Los Angeles'],
-                        start_date=datetime(2010, 12, 1),
-                        end_date=datetime(2011, 1, 1))
+    city_names = [('la', 'Los Angeles'), ('baltimore', 'Baltimore')]
+    network_type = {'zip_distance': network_creation.distance_zip_graph,
+                    'crime_distance': network_creation.distance_crime_graph}
+    parameter = [.1, .8, 1.6, 2.4, 3.2]
 
-    distances = [.1, .8, 1.6, 2.4, 3.2]
-    for d in distances:
-        print('\ndistance = {0}\n'.format(d))
-        g = network_creation.distance_zip_graph(data, d)
-        g.write_graphml('output/la_zip_distance_{0}.graphml'.format(d))
+    # TODO: Make this parallel if the network creation cannot be made parallel
+
+    for city, long_name in city_names:
+        # grab the data we will use
+        data = crime_window(zipcodes=cities[long_name],
+                            start_date=datetime(2010, 12, 1),
+                            end_date=datetime(2011, 1, 1))
+        for type_name, factory in network_type.iteritems():
+            for p in parameter:
+                print('\nparameter = {}\n'.format(p))
+                g = factory(data, p)
+                g.write_graphml('output/{}_{}_{}.graphml'.format(city, type_name, p))
 
 
 def analyze_graphs():
