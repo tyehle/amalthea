@@ -1,16 +1,167 @@
 __author__ = 'Tobin Yehle'
 
 import igraph
-import math
 import pymongo
 from scipy.spatial import Voronoi
 import numpy as np
-import shapely.ops
+from shapely.ops import cascaded_union
 import shapely.geometry
 import fiona
 import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 import multiprocessing
+import os.path
+import json
+
+_client = pymongo.MongoClient('163.118.78.22', 27017)
+_algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
+               'eigenvector': lambda g: g.community_leading_eigenvector(),
+               'label_propagation': lambda g: g.community_label_propagation(weights='weight'),
+               'fast_greedy': lambda g: g.community_fastgreedy(weights='weight').as_clustering(),
+               'multilevel': lambda g: g.community_multilevel(weights='weight')}
+
+
+def ensure_folder(file_path):
+    """ Ensures the folder structure exists for a file.
+
+        :param file_path: The path to the file to ensure.
+
+        Examples
+        --------
+        >>> import json
+        >>> test = {'first': 10, 'second': 'foo'}
+        >>> path = 'data/testing/foobar.json'
+        >>> ensure_folder(path)
+        >>> json.dump(test, open(path, 'w'))
+    """
+    d = os.path.dirname(os.path.abspath(file_path))
+    if not os.path.exists(d):
+        os.makedirs(d)
+
+
+def load_network(path, filename):
+    """ Loads cached network for the filesystem.
+
+        :param path: The base path to the network. This will contain all
+        information about the type of the network.
+        :param filename: The filename of the network. This is usually the dates
+        of the data used to build the network.
+        :return: an igraph.Graph representation of the network.
+
+        Examples
+        --------
+        >>> path = 'data/lake_wobegon/distance/1.6/crime'
+        >>> filename = '2010'
+        >>> network = load_network(path, filename)
+    """
+    return igraph.Graph.Read('{}/networks/{}.graphml'.format(path, filename))
+
+
+def _add_regions(g, cells_file, create_and_add):
+    """ Adds regions to each node in a network.
+
+        The regions are stored as shapely.Polygon objects as the cell attribute
+        in each vertex of the network. If no regions can be found on disk the
+        create_and_add function is used to make new ones. These are then saved
+        to disk for future use.
+
+        :param g: The network to add regions to.
+        :param cells_file: The file regions should be stored in.
+        :param create_and_add: A function to create and add regions if there
+        are none on file.
+
+        Examples
+        --------
+        >>> path = 'data/testing'
+        >>> name = 'test'
+        >>> g = load_network(path, name)
+        >>> cells_file = '{}/regions/zip/{}.shp'.format(path, name)
+        >>> def new_zip_regions(gr):
+        ...     geometry = _client['crimes'].geometry
+        ...     gr.vs['cell'] = [geometry.find_one({'zip': node['zipcode']}) for node in gr.vs]
+        >>> _add_regions(g, cells_file, new_zip_regions)
+        >>> 'cell' in g.vs.attributes()
+        True
+    """
+    if os.path.exists(cells_file):
+        print("Loading Regions")
+        # load cells from file
+        for p in fiona.open(cells_file):
+            g.vs[p['properties']['index']]['cell'] = shapely.geometry.shape(p['geometry'])
+    else:
+        print("No Regions Found")
+
+        create_and_add(g)
+
+        print("Saving Regions")
+
+        # save cells for future use
+        ensure_folder(cells_file)
+        schema = {'geometry': 'Polygon',
+                  'properties': {'index': 'int'}}
+        with fiona.open(cells_file, 'w', 'ESRI Shapefile', schema) as c:
+            for i in range(g.vcount()):
+                writable = shapely.geometry.mapping(shapely.geometry.shape(g.vs[i]['cell']))
+                c.write({'geometry': writable,
+                         'properties': {'index': i}})
+
+
+def add_zip_regions(g, path, filename):
+    """ Adds zipcode based regions to a network.
+
+        Uses the path and filename arguments to find any regions that may be
+        stored on disk. If none are found the ones created for this network
+        will be stored for future use.
+
+        :param g: The network to add regions to.
+        :param path: The base path to the network.
+        :param filename: The filname of the network.
+
+        Examples
+        --------
+        >>> path = 'data/testing'
+        >>> file = 'test'
+        >>> g = load_network(path, file)
+        >>> add_zip_regions(g, path, file)
+        >>> 'cell' in g.vs.attributes()
+        True
+    """
+    cells_file = '{}/regions/zip/{}.shp'.format(path, filename)
+    def new_zip_regions(gr):
+        geometry = _client['crimes'].geometry
+        gr.vs['cell'] = [geometry.find_one({'zip': node['zipcode']}) for node in gr.vs]
+
+    _add_regions(g, cells_file, new_zip_regions)
+
+
+def add_voronoi_regions(g, path, filename):
+    """ Adds Voronoi cell based regions to a network.
+
+        Uses the path and filename arguments to find any regions that may be
+        stored on disk. If none are found the ones created for this network
+        will be stored for future use.
+
+        :param g: The network to add regions to.
+        :param path: The base path to the network.
+        :param filename: The filname of the network.
+
+        Examples
+        --------
+        >>> path = 'data/testing'
+        >>> file = 'test'
+        >>> g = load_network(path, file)
+        >>> add_voronoi_regions(g, path, file)
+        >>> 'cell' in g.vs.attributes()
+        True
+    """
+    cells_file = '{}/regions/voronoi/{}.shp'.format(path, filename)
+    def new_voronoi(gr):
+        layout_position(gr)
+        bound = get_bounds(gr)
+        create_voronoi_regions(gr, bound)
+        clip_cells(gr, bound)
+
+    _add_regions(g, cells_file, new_voronoi)
 
 
 def layout_position(g):
@@ -49,8 +200,7 @@ def get_bounds(g):
         True
     """
     zips = list(set(g.vs['zipcode']))
-    client = pymongo.MongoClient('163.118.78.22', 27017)
-    geometry = client['crimes'].geometry
+    geometry = _client['crimes'].geometry
     results = []
     for z in zips:
         r = geometry.find_one({'zip': z})
@@ -61,7 +211,7 @@ def get_bounds(g):
             results.append(r)
 
     shapes = [shapely.geometry.shape(r['geometry']) for r in results]
-    return shapely.ops.cascaded_union(shapes)
+    return cascaded_union(shapes)
 
 
 def _fix_unbounded_regions(vor, length):
@@ -126,7 +276,7 @@ def _fix_unbounded_regions(vor, length):
             pass
 
 
-def add_voronoi_regions(g, bounds):
+def create_voronoi_regions(g, bounds):
     """ Adds a 'cell' attribute to each node containing that node's Voronoi
         region.
 
@@ -142,7 +292,7 @@ def add_voronoi_regions(g, bounds):
         >>> import igraph
         >>> g = igraph.Graph.Read('test.graphml')
         >>> bounds = get_bounds(g)
-        >>> add_voronoi_regions(g, bounds)
+        >>> create_voronoi_regions(g, bounds)
         >>> 'cell' in g.vs.attributes()
         True
     """
@@ -157,13 +307,13 @@ def add_voronoi_regions(g, bounds):
 
     # make polygons for each of the bounded regions
     # for i in vor.point_region:
-    for pointi in range(len(vor.point_region)):
-        regioni = int(vor.point_region[pointi])  # convert to regular ints to may igraph happy
-        r = vor.regions[regioni]
+    for point_i in range(len(vor.point_region)):
+        region_i = int(vor.point_region[point_i])  # convert to regular ints to may igraph happy
+        r = vor.regions[region_i]
 
         if -1 not in r:
             # this region is fully defined, so add it
-            g.vs[pointi]['cell'] = shapely.geometry.Polygon([vor.vertices[j] for j in r])
+            g.vs[point_i]['cell'] = shapely.geometry.Polygon([vor.vertices[j] for j in r])
         else:
             print('Warning: unbounded region {}'.format(r))
 
@@ -207,7 +357,7 @@ def clip_cells(g, bounds):
         >>> import igraph
         >>> g = igraph.Graph.Read('test.graphml')
         >>> bounds = get_bounds(g)
-        >>> add_voronoi_regions(g, bounds)
+        >>> create_voronoi_regions(g, bounds)
         >>> clip_cells(g, bounds)
     """
     # run this in parallel
@@ -215,92 +365,51 @@ def clip_cells(g, bounds):
     g.vs['cell'] = pool.map(_Clipper(bounds), g.vs['cell'])
 
 
-def save_communities(g, n, filename, algorithm='label_propagation'):
-    """ Finds a number of communities in a graph, and saves the shapes of those
-        communities to a file.
+def get_communities(g, n, path, filename, algorithm='label_propagation'):
+    """ Gets a number of igraph.VertexClustering objects.
 
-        :param g: The graph to find communities in. Each node must have a cell
-        attribute defining that node's area of influence.
-        :param n: The number of times to run community detection.
-        :param filename: The name of the file to shave the shapes to. Each
-        polygon has a single property 'iteration' that contains the iteration
-        during which that community was found.
-        :param algorithm: The name of the communitiy detection algorithm to
-        run. Should be one of: 'random_walk', 'eigenvector',
-        'label_propagation', 'fast_greedy', or 'mulitilevel'. Default is
-        'label_propagation'
+        These objects are loaded from file if possible, otherwise they are
+        found using the given algorithm.
 
-        Examples
-        --------
-        >>> import igraph
-        >>> g = igraph.Graph.Read('test.graphml')
-        >>> bounds = get_bounds(g)
-        >>> add_voronoi_regions(g, bounds)
-        >>> clip_cells(g, bounds)
-        >>> iterations = 10
-        >>> save_communities(g, iterations, 'test.shp')
-        >>> save_communities(g, iterations, 'test_walk.shp', algorithm='random_walk')
-    """
-    communities = get_communities(g, n, algorithm)
+        :param g: The graph to find communities in.
+        :param n: The number of communities to find.
+        :param path: The path to the base folder for the graph.
+        :param filename: The filename of the graph to use.
+        :param algorithm: The name of the clustering algorithm to use.
 
-    # Write the shapes to a file
-    schema = {
-        'geometry': 'Polygon',
-        'properties': {'iteration': 'int'},
-    }
-    with fiona.open(filename, 'w', 'ESRI Shapefile', schema) as c:
-        for i in range(n):
-            for poly in communities[i]:
-                c.write({'geometry': shapely.geometry.mapping(shapely.geometry.shape(poly)),
-                         'properties': {'iteration': i}})
+        The filename and path arguments are used to find clusters stored on
+        disk. Any new clusters are stored along with the ones already present
+        for future use.
 
-
-def get_communities(g, n, algorithm):
-    """ Gets a number communities from a graph.
-
-        :param g: The graph to find communities in. Each vertex must have a
-        cell attribute representing that node's area of influence.
-        :param n: The number of iterations of community detection to run
-        :param algorithm: The name of the communitiy detection algorithm to
-        run. Should be one of: 'random_walk', 'eigenvector',
-        'label_propagation', 'fast_greedy', or 'mulitilevel'
-        :return: list<list<Polygon>> Each list of polygons are the borders
-        found in a single iteration.
+        :return: A list of VertexClustering objects
 
         Examples
         --------
-        >>> import igraph
-        >>> g = igraph.Graph.Read('test.graphml')
-        >>> bounds = get_bounds(g)
-        >>> add_voronoi_regions(g, bounds)
-        >>> clip_cells(g, bounds)
-        >>> communities = get_communities(g, 10, 'fast_greedy')
-        >>> len(communities)
+        >>> path = 'data/testing'
+        >>> filename = 'test1'
+        >>> g = load_network(path, filename)
+        >>> comms = get_communities(g, 10, path, filename, algorithm='random_walk')
+        >>> len(comms)
         10
     """
-    communities = [[] for _ in range(n)]
-    for iteration in range(n):
-        ### find communities ###\
-        algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
-                      'eigenvector': lambda g: g.community_leading_eigenvector(),
-                      'label_propagation': lambda g: g.community_label_propagation(weights='weight'),
-                      'fast_greedy': lambda g: g.community_fastgreedy(weights='weight').as_clustering(),
-                      'multilevel': lambda g: g.community_multilevel(weights='weight')}
-        comms = algorithms[algorithm](g)
+    # load any preexisting clusters
+    cluster_path = '{}/communities/{}/{}.json'.format(path, algorithm, filename)
+    if os.path.exists(cluster_path):
+        cluster_sets = json.load(open(cluster_path, 'r'))
+    else:
+        cluster_sets = []
+    # add new clusters if needed
+    while len(cluster_sets) < n:
+        clustering = _algorithms[algorithm](g)
+        cluster_sets.append({'membership': clustering.membership,
+                             'modularity_params':clustering._modularity_params})
+    # save the cluster sets
+    ensure_folder(cluster_path)
+    json.dump(cluster_sets, open(cluster_path, 'w'))
 
-        # find all of the cells in each community
-        polys = [[] for _ in comms]  # polys : list<list<Polygon>>
-        for i in range(len(comms)):
-            for node_index in comms[i]:
-                p = g.vs[node_index]['cell']
-                if p.geom_type is "MultiPolygon":
-                    polys[i].extend(p)
-                else:
-                    polys[i].append(p)
-        # merge each list of polygons
-        communities[iteration] = map(shapely.ops.cascaded_union, polys)
-
-    return communities
+    # construct a list of objects
+    clusters = [igraph.VertexClustering(g, **c) for c in cluster_sets]
+    return clusters[:n]  # return only the first n
 
 
 def _collapse_duplicate_areas(temp_list):
@@ -355,7 +464,7 @@ def _separate_borders(line_dict):
                     if not done:
                         # if we have changed the dictionary do not try to continue
                         break
-                    if border.equals(other_border):
+                    if border is other_border:
                         # these are the same border, ignore
                         continue
                     # check for intersection
@@ -405,22 +514,54 @@ def _separate_borders(line_dict):
     return unique_borders
 
 
-def save_borders(communities_path, borders_path):
-    """ Converts a community shape file to a border shape file.
+def save_borders(path,
+                 filename,
+                 region_type='voronoi',
+                 iterations=10,
+                 algorithm='label_propagation'):
+    """ Saves a shapefile containing the borders for a given network.
 
-        The community shape file should have a list of polygons defining the
-        shapes of a community. The border file will contain a list of lines
-        with weights corresponding to the number of times that border appeared
-        in the community shape file.
+        The network is found using the path and filename arguments. If there
+        are already borders of the same type no new borders will be made.
 
-        :param communities_path: The path to the community shape file
-        :param borders_path: The path to the output border shape file
+        :param path: The base path to the network of interest.
+        :param filename: The filename of the network of interest.
+        :param region_type: The type of region surrounding each node.
+        :param iterations: The number of iterations of community detection to
+        use for border detection. More iterations will show weak borders more
+        clearly.
+        :param algorithm: The community detection algorithm to use.
 
         Examples
         --------
-        >>> save_borders('test_communities.shp', 'test_borders.shp')
+        >>> import os.path
+        >>> save_borders('data/testing',
+        ...              'test',
+        ...              region_type='voronoi',
+        ...              iterations=10,
+        ...              algorithm='random_walk')
+        >>> os.path.exists('data/testing/borders/voronoi/random_walk/test_10.shp')
+        True
     """
-    borders = quantify_borders(communities_path)
+    borders_path = '{}/borders/{}/{}/{}_{}.shp'.format(path, region_type, algorithm, filename, iterations)
+    if os.path.exists(borders_path):
+        # these borders already exist, no need to compute them again
+        return
+
+    add_regions = {'zip': add_zip_regions,
+                   'voronoi': add_voronoi_regions}
+
+    g = load_network(path, filename)
+    add_regions[region_type](g, path, filename)
+    clusters = get_communities(g, iterations, path, filename, algorithm)
+
+    communities = get_community_shapes(g, clusters)
+    # unpack list of lists into a single list
+    communities = [p for polys in communities for p in polys]
+
+    borders = quantify_borders(communities)
+
+    ensure_folder(borders_path)
     schema = {'geometry': 'MultiLineString',
               'properties': {'weight': 'int'}}
     with fiona.open(borders_path, 'w', 'ESRI Shapefile', schema) as c:
@@ -429,90 +570,136 @@ def save_borders(communities_path, borders_path):
                      'properties': {'weight': w}})
 
 
-def quantify_borders(shp_file):
-    """ Takes the borders in the given shape file and find the number of times
-        any segment appears.
+def get_community_shapes(g, clusters):
+    """ Converts a list of igraph.VertexClustering objects into a list of
+        shapes representing each community.
 
-        The resulting map contains line segments as keys, and the number of
-        times that unique segment appears in the shapes in the given shape
-        file as values.
+        :param g: The graph containing nodes with a cell attribute.
+        :param clusters: A list of igraph.VertexClustering objects representing
+        the sets of clusters.
+        :return: A list of shapes, one for each community.
 
-        Takes string
-        Returns map<shape, int>
+        Examples
+        --------
+        >>> g = load_network('data/testing', 'test')
+        >>> iterations = 5
+        >>> clusters = [g.community_multilevel(weights='weight') for _ in range(iterations)]
+        >>> shapes = get_community_shapes(g, clusters)
+        >>> num_comms = reduce(lambda s, c: s + len(c), clusters, 0)
+        >>> len(shapes) == num_comms
+        True
     """
-    temp_list = []
-    with fiona.open(shp_file) as inp:
-        for rec in inp:
-            temp_list.append(shapely.geometry.asShape(rec['geometry']))
+    # get a list of shapes for each run of the clustering algorithm
+    communities = [[] for _ in range(len(clusters))]
+    for iteration in range(len(clusters)):
+        comms = clusters[iteration]
+        polys = [[] for _ in comms]  # group each region with the others in its community
+        for i in range(len(comms)):
+            for node_index in comms[i]:
+                p = g.vs[node_index]['cell']
+                if p.geom_type is "MultiPolygon":
+                    polys[i].extend(p)
+                else:
+                    polys[i].append(p)
+        # merge each list of polygons into a community
+        communities[iteration] = map(cascaded_union, polys)
+    return communities
 
-    line_dict = _collapse_duplicate_areas(temp_list)
+
+def quantify_borders(communities):
+    """ Breaks a list of polygons into a list of lines with weights.
+
+        :param communities: A list of all the communities found in a network.
+        :return: A map containing line segments as keys, and the number of
+        times that unique segment appears in the community polygons as values.
+    """
+    line_dict = _collapse_duplicate_areas(communities)
 
     return _separate_borders(line_dict)
 
 
-def border_plot(shp_file):
-    # TODO: Make this work more generally
-    m = Basemap(width=49000,
-                height=38000,
-                projection='lcc',
-                resolution='h',
-                lat_0=39.307556,
-                lon_0=-76.600933)
-    shp_info = m.readshapefile(shp_file, 'comm_bounds', drawbounds=False)
-    colormap = plt.get_cmap('winter')
+def plot_map(border_path, pad=.05):
+    """ Plots the borders in a shapefile.
+
+        :param border_path: The path to the shape file containing the borders
+        to plot.
+        :param pad: The percentage of the width to pad the edge of the map.
+    """
+    union = cascaded_union([shapely.geometry.shape(p['geometry']) for p in
+                            fiona.open(border_path+'.shp')])
+    (llx, lly, urx, ury) = union.bounds
+    # assume we are in the northern hemisphere, west of the meridian
+    width = urx - llx
+    height = ury - lly
+    llx -= pad * width
+    urx += pad * width
+    lly -= pad * height
+    ury += pad * height
+    m = Basemap(resolution='h',
+                projection='merc',
+                llcrnrlon=llx,
+                llcrnrlat=lly,
+                urcrnrlon=urx,
+                urcrnrlat=ury)
+    m.readshapefile(border_path, 'comm_bounds', drawbounds=False)
+    m.drawmapboundary(color='k', linewidth=1.0, fill_color='#006699')
+    m.fillcontinents(color='.6', zorder=0)
+    colormap = plt.get_cmap('gist_heat')
+    max_weight = max([border['weight'] for border in m.comm_bounds_info])
     for border, shape in zip(m.comm_bounds_info, m.comm_bounds):
         xx, yy = zip(*shape)
-        m.plot(xx, yy, linewidth=4, color=colormap(border['weight'] / 8.0))
+        m.plot(xx, yy, linewidth=2, color=colormap(border['weight'] / float(max_weight)))
 
-    m.drawcoastlines(linewidth=0.3)
+    m.drawcoastlines(linewidth=1)
+
+    # TODO: Make the color bar actually work
+    # m.colorbar()
 
     plt.show()
 
 
 if __name__ == '__main__':
-    print("Loading Graph")
+    print('Running Script')
+    # cities = ['los_angeles', 'baltimore']
+    # distances = [.1, .8, 1.6, 2.4, 3.2]
+    # types = ['crime', 'zip']
+    # algorithms = ['random_walk', 'eigenvector', 'label_propagation', 'fast_greedy', 'multilevel']
 
-    path = 'la_zip_distance_50k_1.6'
-    iterations = 10
-    g = igraph.Graph.Read('data/networks/{}.graphml'.format(path))
+    cities = ['los_angeles']
+    distances = [1.6]
+    types = ['zip']
+    algorithms = ['label_propagation']
 
-    print("Finding Cells")
+    iterations = 30
 
-    layout_position(g)
-    bounds = get_bounds(g)
-    add_voronoi_regions(g, bounds)
+    for city in cities:
+        for distance in distances:
+            for node_type in types:
+                base_path = 'data/{}/distance/{}/{}'.format(city, distance, node_type)
+                filename = '30dec2010'
 
-    print("Clipping Cells")
+                network = load_network(base_path, filename)
+                # add_voronoi_regions(network, base_path, filename)
 
-    clip_cells(g, bounds)
+                for algorithm in algorithms:
+                    print("Finding {} Communities".format(iterations))
 
-    print("Finding {} Communities".format(iterations))
+                    # comms = ensure_communities(network,
+                    #                            iterations,
+                    #                            base_path,
+                    #                            filename,
+                    #                            algorithm=algorithm)
 
-    save_communities(g, iterations, 'output/communities/{}.shp'.format(path))
+                    # print("Counting Borders")
 
-    print("Counting Borders")
+                    save_borders(base_path,
+                                 filename,
+                                 iterations=iterations,
+                                 algorithm=algorithm,
+                                 region_type='voronoi')
 
-    save_borders('output/communities/{}.shp'.format(path),
-                 'output/borders/test.shp'.format(path))
+                    print("Plotting")
 
-    print("Plotting")
-
-    lat, lon = (34.042988, -118.25145)
-    m = Basemap(width=144000,
-                height=144000,
-                projection='lcc',
-                resolution='h',
-                lat_0=lat,
-                lon_0=lon)
-    shp_info = m.readshapefile('output/borders/test'.format(path), 'comm_bounds', drawbounds=False)
-    colormap = plt.get_cmap('winter')
-    max_weight = max([border['weight'] for border in m.comm_bounds_info])
-    print(max_weight)
-    for border, shape in zip(m.comm_bounds_info, m.comm_bounds):
-        xx, yy = zip(*shape)
-        m.plot(xx, yy, linewidth=4, color=colormap(border['weight'] / float(max_weight)))
-
-    m.drawcoastlines(linewidth=1)
-
-    plt.show()
-
+                    plot_map('{}/borders/voronoi/label_propagation/{}_{}'.format(base_path,
+                                                                                 filename,
+                                                                                 iterations))

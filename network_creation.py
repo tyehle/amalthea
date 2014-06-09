@@ -381,40 +381,68 @@ def v_distance(lat1, lon1, lat2, lon2):
     return abs(r * c)
 
 
+def reduce_to_zip_graph(crime_graph):
+    """ Builds a zip graph based on the relations in the given crime graph.
+
+        Warning: Any graph given to this method may change. Save a copy first!
+
+        :param crime_graph: The crime graph to use as a seed for the zipcode
+        graph. This graph's nodes must have a zipcode attribute and the edges
+        must have a weight attribute.
+        :return: The contracted graph. The weight attribute of the edges
+        contains the sum of the weights from the original. Each node retains a
+        zipcode, latitude, longitude, description, and type attribute. The
+        description attribute is the number of contracted nodes in that vertex.
+    """
+    # generate the mapping from crime
+    new_ids = crime_graph.vs['zipcode']
+    unique_ids = list(set(new_ids))
+    id_map = {unique_ids[i]: i for i in range(len(unique_ids))}
+    index_map = [id_map[new_id] for new_id in new_ids]
+    mode = lambda cs: Counter(cs).most_common(1)[0][0]
+    crime_graph.contract_vertices(index_map,
+                                  {'zipcode': 'first',
+                                   'latitude': 'mean',
+                                   'longitude': 'mean',
+                                   'description': len,
+                                   'type': mode})
+    crime_graph.simplify(combine_edges=sum)
+
+
 def distance_zip_graph(crime_list, distance):
     for c in crime_list:
         c['latitude'] = float(c['latitude'])
         c['longitude'] = float(c['longitude'])
-    first = lambda cs: cs[0]
-    mean = lambda cs: sum(cs)/float(len(cs))
-    mode = lambda cs: Counter(cs).most_common(1)[0][0]
     return get_graph(crime_list,
                      lambda a, b: v_distance(a['latitude'],
                                              a['longitude'],
                                              b['latitude'],
                                              b['longitude']) < distance,
                      lambda c: c['zipcode'],
-                     {'zipcode': first,
-                      'latitude': mean,
-                      'longitude': mean,
+                     {'zipcode': 'first',
+                      'latitude': 'mean',
+                      'longitude': 'mean',
                       'description': len,
-                      'type': mode})
+                      'type': 'mode'})
 
 
 def distance_crime_graph(crime_list, distance):
     for c in crime_list:
         c['latitude'] = float(c['latitude'])
         c['longitude'] = float(c['longitude'])
-    first = lambda cs: cs[0]
     return get_graph(crime_list,
                      lambda a, b: v_distance(a['latitude'],
                                              a['longitude'],
                                              b['latitude'],
                                              b['longitude']) < distance,
                      lambda c: c['_id'],
-                     {'description': first, 'zipcode': first,
-                      'longitude': first, 'latitude': first,
-                      'address': first, 'date': first, 'type': first})
+                     {'description': 'first',
+                      'zipcode': 'first',
+                      'longitude': 'first',
+                      'latitude': 'first',
+                      'address': 'first',
+                      'date': 'first',
+                      'type': 'first'})
 
 
 def get_graph(crime_list, crime_associated, get_id, combination_rules, add_index=False):
@@ -516,12 +544,19 @@ def get_graph(crime_list, crime_associated, get_id, combination_rules, add_index
                 else:
                     edges[edge] = 1
 
+    common_functions = {'first': lambda cs: cs[0],
+                        'last': lambda cs: cs[-1],
+                        'mean': lambda cs: sum(cs)/float(len(cs)),
+                        'mode': lambda cs: Counter(cs).most_common(1)[0][0]}
     node_attributes = [dict() for _ in unique_ids]
     # create the list of node attributes
     for attribute, function in combination_rules.iteritems():
         for i in range(len(unique_ids)):
             crimes_with_id = [crime_list[j] for j in range(len(crime_list)) if indices[j] == i]
-            node_attributes[i][attribute] = function([c[attribute] for c in crimes_with_id])
+            if function in common_functions:
+                node_attributes[i][attribute] = common_functions[function]([c[attribute] for c in crimes_with_id])
+            else:
+                node_attributes[i][attribute] = function([c[attribute] for c in crimes_with_id])
 
     g = igraph.Graph()
     for attrs in node_attributes:
