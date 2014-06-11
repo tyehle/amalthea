@@ -1,5 +1,7 @@
 __author__ = 'Tobin Yehle'
 
+import matplotlib
+matplotlib.use('Agg')  # this fixes issues when executing over ssh
 import igraph
 import pymongo
 from scipy.spatial import Voronoi
@@ -12,6 +14,8 @@ from mpl_toolkits.basemap import Basemap
 import multiprocessing
 import os.path
 import json
+import itertools
+import logging.config
 
 _client = pymongo.MongoClient('163.118.78.22', 27017)
 _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
@@ -19,6 +23,7 @@ _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').a
                'label_propagation': lambda g: g.community_label_propagation(weights='weight'),
                'fast_greedy': lambda g: g.community_fastgreedy(weights='weight').as_clustering(),
                'multilevel': lambda g: g.community_multilevel(weights='weight')}
+logger = logging.getLogger(__name__)
 
 
 def ensure_folder(file_path):
@@ -84,16 +89,16 @@ def _add_regions(g, cells_file, create_and_add):
         True
     """
     if os.path.exists(cells_file):
-        print("Loading Regions")
+        logger.info("Loading Regions")
         # load cells from file
         for p in fiona.open(cells_file):
             g.vs[p['properties']['index']]['cell'] = shapely.geometry.shape(p['geometry'])
     else:
-        print("No Regions Found")
+        logger.info("No Regions Found")
 
         create_and_add(g)
 
-        print("Saving Regions")
+        logger.info("Saving Regions")
 
         # save cells for future use
         ensure_folder(cells_file)
@@ -106,7 +111,7 @@ def _add_regions(g, cells_file, create_and_add):
                          'properties': {'index': i}})
 
 
-def add_zip_regions(g, path, filename):
+def add_zip_regions(g, path, filename, parallel=False):
     """ Adds zipcode based regions to a network.
 
         Uses the path and filename arguments to find any regions that may be
@@ -134,7 +139,7 @@ def add_zip_regions(g, path, filename):
     _add_regions(g, cells_file, new_zip_regions)
 
 
-def add_voronoi_regions(g, path, filename):
+def add_voronoi_regions(g, path, filename, parallel=True):
     """ Adds Voronoi cell based regions to a network.
 
         Uses the path and filename arguments to find any regions that may be
@@ -155,11 +160,14 @@ def add_voronoi_regions(g, path, filename):
         True
     """
     cells_file = '{}/regions/voronoi/{}.shp'.format(path, filename)
+
     def new_voronoi(gr):
         layout_position(gr)
         bound = get_bounds(gr)
+        logger.info('Creating Voronoi Cells')
         create_voronoi_regions(gr, bound)
-        clip_cells(gr, bound)
+        logger.info('Clipping Cells')
+        clip_cells(gr, bound, parallel=parallel)
 
     _add_regions(g, cells_file, new_voronoi)
 
@@ -206,7 +214,7 @@ def get_bounds(g):
         r = geometry.find_one({'zip': z})
         # we should have all zipcodes, but just in case ...
         if r is None:
-            print('Warning: no associated zipcode shape for ' + z)
+            logger.warn('no associated zipcode shape for ' + z)
         else:
             results.append(r)
 
@@ -315,7 +323,7 @@ def create_voronoi_regions(g, bounds):
             # this region is fully defined, so add it
             g.vs[point_i]['cell'] = shapely.geometry.Polygon([vor.vertices[j] for j in r])
         else:
-            print('Warning: unbounded region {}'.format(r))
+            logger.warn('unbounded region {}'.format(r))
 
 
 class _Clipper(object):
@@ -339,7 +347,7 @@ class _Clipper(object):
         return self.bounds.intersection(polygon)
 
 
-def clip_cells(g, bounds):
+def clip_cells(g, bounds, parallel=True):
     """ Clips all the cells in a graph to a bounding polygon.
 
         This algorithm is run in parallel because it may take a while if there
@@ -352,6 +360,8 @@ def clip_cells(g, bounds):
         :param bounds: The bounds to clip the cells to. This should be a
         polygon covering all the area cells could potentially be in.
 
+        :param parallel: Whether to do this in parallel or not
+
         Examples
         --------
         >>> import igraph
@@ -360,9 +370,12 @@ def clip_cells(g, bounds):
         >>> create_voronoi_regions(g, bounds)
         >>> clip_cells(g, bounds)
     """
-    # run this in parallel
-    pool = multiprocessing.Pool()
-    g.vs['cell'] = pool.map(_Clipper(bounds), g.vs['cell'])
+    if parallel:
+        # run this in parallel
+        pool = multiprocessing.Pool()
+        g.vs['cell'] = pool.map(_Clipper(bounds), g.vs['cell'])
+    else:
+        g.vs['cell'] = map(_Clipper(bounds), g.vs['cell'])
 
 
 def get_communities(g, n, path, filename, algorithm='label_propagation'):
@@ -398,8 +411,10 @@ def get_communities(g, n, path, filename, algorithm='label_propagation'):
         cluster_sets = json.load(open(cluster_path, 'r'))
     else:
         cluster_sets = []
+    logger.info('Loaded {} communities'.format(len(cluster_sets)))
     # add new clusters if needed
     while len(cluster_sets) < n:
+        logger.debug('{} / {} communities'.format(len(cluster_sets), n))
         clustering = _algorithms[algorithm](g)
         cluster_sets.append({'membership': clustering.membership,
                              'modularity_params':clustering._modularity_params})
@@ -423,10 +438,14 @@ def _collapse_duplicate_areas(temp_list):
     line_dict = dict()
     while len(temp_list) > 0:
         p = temp_list.pop()
+        # convert polygon to line
         if p.geom_type == 'Polygon':
             p = [shapely.geometry.LineString(list(p.exterior.coords))]
         elif p.geom_type == 'MultiPolygon':
             p = [shapely.geometry.LineString(list(pi.exterior.coords)) for pi in p]
+        else:
+            logger.warn('Unrecognized region geometry {}, ignoring'.format(p.geom_type))
+
         for poly in p:
             exists = False
             for q in line_dict.keys():
@@ -452,7 +471,7 @@ def _separate_borders(line_dict):
     done = False
     while not done:
         done = True
-        print('{} / {}'.format(len(unique_borders), len(line_dict)))
+        logger.debug('{} / {} borders'.format(len(unique_borders), len(line_dict)))
         # iterate through the current version of line_dict
         try:
             for border in line_dict:
@@ -470,7 +489,7 @@ def _separate_borders(line_dict):
                     # check for intersection
                     i = border.intersection(other_border)
                     if i.length > 0.0:
-                        print('adjusting borders')
+                        logger.debug('adjusting borders')
                         # corrupt the dictionary
                         diff_border = border.difference(i)
                         if diff_border.length > 0.0:
@@ -511,14 +530,16 @@ def _separate_borders(line_dict):
             # add the healthy border back into the dict
             unique_borders[border] = weight
 
+    # make sure none of the borders have area
+    # this can happen if communities overlap?
+    for border in unique_borders.keys():
+        if border.area > 0:
+            logger.warn('Border has area {}'.format(border))
+
     return unique_borders
 
 
-def save_borders(path,
-                 filename,
-                 region_type='voronoi',
-                 iterations=10,
-                 algorithm='label_propagation'):
+def save_borders(path, filename, region_type='voronoi', iterations=10, algorithm='label_propagation', parallel=True):
     """ Saves a shapefile containing the borders for a given network.
 
         The network is found using the path and filename arguments. If there
@@ -546,20 +567,25 @@ def save_borders(path,
     borders_path = '{}/borders/{}/{}/{}_{}.shp'.format(path, region_type, algorithm, filename, iterations)
     if os.path.exists(borders_path):
         # these borders already exist, no need to compute them again
+        logger.info("Borders exist, skipping")
         return
 
     add_regions = {'zip': add_zip_regions,
                    'voronoi': add_voronoi_regions}
 
     g = load_network(path, filename)
-    add_regions[region_type](g, path, filename)
+    add_regions[region_type](g, path, filename, parallel)
     clusters = get_communities(g, iterations, path, filename, algorithm)
 
     communities = get_community_shapes(g, clusters)
     # unpack list of lists into a single list
     communities = [p for polys in communities for p in polys]
 
+    logger.info('Reducing Borders')
+
     borders = quantify_borders(communities)
+
+    logger.info('Saving Borders')
 
     ensure_folder(borders_path)
     schema = {'geometry': 'MultiLineString',
@@ -618,13 +644,16 @@ def quantify_borders(communities):
     return _separate_borders(line_dict)
 
 
-def plot_map(border_path, pad=.05):
+def plot_border_map(border_path, pad=.05):
     """ Plots the borders in a shapefile.
 
         :param border_path: The path to the shape file containing the borders
         to plot.
         :param pad: The percentage of the width to pad the edge of the map.
     """
+    logger.info('Plotting Borders')
+    fig = plt.figure()
+    ax = fig.add_subplot()
     union = cascaded_union([shapely.geometry.shape(p['geometry']) for p in
                             fiona.open(border_path+'.shp')])
     (llx, lly, urx, ury) = union.bounds
@@ -640,7 +669,8 @@ def plot_map(border_path, pad=.05):
                 llcrnrlon=llx,
                 llcrnrlat=lly,
                 urcrnrlon=urx,
-                urcrnrlat=ury)
+                urcrnrlat=ury,
+                ax=ax)
     m.readshapefile(border_path, 'comm_bounds', drawbounds=False)
     m.drawmapboundary(color='k', linewidth=1.0, fill_color='#006699')
     m.fillcontinents(color='.6', zorder=0)
@@ -655,51 +685,102 @@ def plot_map(border_path, pad=.05):
     # TODO: Make the color bar actually work
     # m.colorbar()
 
-    plt.show()
+    return fig
+
+
+class Worker(object):
+    def __call__(self, params):
+        try:
+            city = params['city']
+            distance = params['distance']
+            node_type = params['node_type']
+            region_type = params['region']
+            algorithm = params['algorithm']
+            name = params['filename']
+            iterations = params['iterations']
+
+            unique_id = '{}-{}-{}-{}-{}-{}-{}'.format(city,
+                                                      distance,
+                                                      node_type,
+                                                      region_type,
+                                                      algorithm,
+                                                      name,
+                                                      iterations)
+
+            # The thread pool copies __main__, so this should change the name
+            # of the logger for only this thread
+            logger.name = unique_id
+
+            logger.info('Starting!')
+
+            path = 'data/{}/distance/{}/{}'.format(city, distance, node_type)
+
+            add = {'voronoi': add_voronoi_regions, 'zip': add_zip_regions}
+
+            network = load_network(path, name)
+
+            add[region_type](network, path, name, parallel=False)
+
+            _ = get_communities(network, iterations, path, name, algorithm=algorithm)
+
+            save_borders(path,
+                         name,
+                         iterations=iterations,
+                         algorithm=algorithm,
+                         region_type=region_type,
+                         parallel=False)
+
+            fig = plot_border_map('{}/borders/voronoi/{}/{}_{}'.format(path,
+                                                                       algorithm,
+                                                                       name,
+                                                                       iterations))
+            fig.savefig('{}.svg'.format(unique_id))
+            # fig.show()
+
+            logger.info('Done!')
+            return True
+        except Exception:
+            logger.error('Failed!', exc_info=True)
 
 
 if __name__ == '__main__':
-    print('Running Script')
+    # write info and debug to different files
+    logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
+    fiona.log.setLevel(logging.WARNING)  # I don't care about the fiona logs
+
     # cities = ['los_angeles', 'baltimore']
-    # distances = [.1, .8, 1.6, 2.4, 3.2]
+    # distances = [3.2, 2.4, 1.6, .8, .1]
     # types = ['crime', 'zip']
     # algorithms = ['random_walk', 'eigenvector', 'label_propagation', 'fast_greedy', 'multilevel']
+    # regions = ['voronoi', 'zip']
+    # iterations = [30]
+    # filenames = ['dec2010', '17dec2010', '30dec2010']
 
-    cities = ['los_angeles']
-    distances = [1.6]
+    cities = ['los_angeles']#, 'baltimore']
+    distances = [3.2, 2.4, 1.6, .8, .1]
     types = ['zip']
+    regions = ['voronoi']
     algorithms = ['label_propagation']
+    filenames = ['30dec2010']# , '17dec2010', '30dec2010']
+    iterations = [30]
 
-    iterations = 30
+    params = []
+    for c, d, t, a, r, i, n in itertools.product(cities,
+                                                 distances,
+                                                 types,
+                                                 algorithms,
+                                                 regions,
+                                                 iterations,
+                                                 filenames):
+        params.append({'city': c,
+                       'distance': d,
+                       'node_type': t,
+                       'algorithm': a,
+                       'region': r,
+                       'iterations': i,
+                       'filename': n})
 
-    for city in cities:
-        for distance in distances:
-            for node_type in types:
-                base_path = 'data/{}/distance/{}/{}'.format(city, distance, node_type)
-                filename = '30dec2010'
-
-                network = load_network(base_path, filename)
-                # add_voronoi_regions(network, base_path, filename)
-
-                for algorithm in algorithms:
-                    print("Finding {} Communities".format(iterations))
-
-                    # comms = ensure_communities(network,
-                    #                            iterations,
-                    #                            base_path,
-                    #                            filename,
-                    #                            algorithm=algorithm)
-
-                    # print("Counting Borders")
-
-                    save_borders(base_path,
-                                 filename,
-                                 iterations=iterations,
-                                 algorithm=algorithm,
-                                 region_type='voronoi')
-
-                    print("Plotting")
-
-                    plot_map('{}/borders/voronoi/label_propagation/{}_{}'.format(base_path,
-                                                                                 filename,
-                                                                                 iterations))
+    pool = multiprocessing.Pool()
+    results = pool.map(Worker(), params)
+    # results = map(Worker(), params)  # serial execution
+    logger.info(results)
