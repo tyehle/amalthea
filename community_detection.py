@@ -103,7 +103,7 @@ def add_regions(g, path, filename, region_type):
             clip_cells(g, bound)
         elif region_type is 'zip':
             geometry = _client['crimes'].geometry
-            r.vs['cell'] = [geometry.find_one({'zip': node['zipcode']}) for node in g.vs]
+            g.vs['cell'] = [geometry.find_one({'zip': node['zipcode']}) for node in g.vs]
         else:
             logger.warning("Unrecognized region type: {}".format(region_type))
             raise NotImplementedError('{} regions not implemented'.format(region_type))
