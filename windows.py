@@ -7,12 +7,24 @@ Created on Tue May 21 02:03 2014
 from pymongo import MongoClient
 from shapely.geometry import asShape, Polygon
 from unidecode import unidecode
+from datetime import datetime
 
 client = MongoClient('163.118.78.22', 27017)
 db = client['crimes']
 crimes = db.crimes
 zips = db.zipcodes
 geom = db.geometry
+
+_datefmt = '%Y-%m-%d %H:%M:%S'
+
+
+def str2date(s):
+    return datetime.strptime(s, _datefmt)
+
+
+def date2str(d):
+    return d.strftime(_datefmt)
+
 
 def crime_window(start_date=None,
                  end_date=None,
@@ -89,15 +101,18 @@ def crime_window(start_date=None,
     if max_size is None:
         max_size = 0
 
-    c_window = [c for c in crimes.find(limits, limit=max_size)]
+    c_window = crimes.find(limits, limit=max_size)
+    # convert keys to strings
+    data = [{str(k): v for k, v in data.iteritems()} for data in c_window]
 
-    for c in c_window:
+    for c in data:
         c['description'] = unidecode(c['description'])
         c['address'] = unidecode(c['address'])
         c['latitude'] = float(c['latitude'])
         c['longitude'] = float(c['longitude'])
+        c['date'] = date2str(c['date'])
 
-    return c_window
+    return data
 
 def zip_box(minlat, minlon, maxlat, maxlon):
     # Make a box
