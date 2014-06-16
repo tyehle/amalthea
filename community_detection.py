@@ -15,6 +15,7 @@ import os.path
 import json
 import multithreading
 import logging.config
+import network_creation
 
 _client = pymongo.MongoClient('163.118.78.22', 27017)
 _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
@@ -58,7 +59,14 @@ def load_network(path, filename):
         >>> filename = '2010'
         >>> network = load_network(path, filename)
     """
-    return igraph.Graph.Read('{}/networks/{}.graphml'.format(path, filename))
+    network_path = '{}/networks/{}.graphml'.format(path, filename)
+    h = open(network_path, 'r')
+    try:
+        multithreading.lock_file_handle(h)
+        return igraph.Graph.Read(network_path)
+    finally:
+        multithreading.unlock_file_handle(h)
+        h.close()
 
 
 def add_regions(g, path, filename, region_type):
@@ -87,25 +95,32 @@ def add_regions(g, path, filename, region_type):
     cells_file = os.path.join(path, 'regions', region_type, filename+'.shp')
     if os.path.exists(cells_file):
         logger.info("Loading Regions")
-        # load cells from file
-        for p in fiona.open(cells_file):
-            g.vs[p['properties']['index']]['cell'] = shapely.geometry.shape(p['geometry'])
+        h = open(cells_file[:-4]+'.dbf', 'r')
+        try:
+            multithreading.lock_file_handle(h)
+            # load cells from file
+            for p in fiona.open(cells_file):
+                g.vs[p['properties']['index']]['cell'] = shapely.geometry.shape(p['geometry'])
+        finally:
+            multithreading.unlock_file_handle(h)
+            h.close()
     else:
         logger.info("No Regions Found")
 
         # add the regions to the graph
-        if region_type is 'voronoi':
+        if region_type == 'voronoi':
             layout_position(g)
             bound = get_bounds(g)
             logger.info('Creating Voronoi Cells')
             create_voronoi_regions(g, bound)
             logger.info('Clipping Cells')
             clip_cells(g, bound)
-        elif region_type is 'zip':
+        elif region_type == 'zip':
+            logger.info('Finding Zipcode Cells')
             geometry = _client['crimes'].geometry
-            g.vs['cell'] = [geometry.find_one({'zip': node['zipcode']}) for node in g.vs]
+            g.vs['cell'] = [shapely.geometry.shape(geometry.find_one({'zip': node['zipcode']})['geometry']) for node in g.vs]
         else:
-            logger.warning("Unrecognized region type: {}".format(region_type))
+            logger.warning("Unrecognized region type: '{}'".format(region_type))
             raise NotImplementedError('{} regions not implemented'.format(region_type))
 
         logger.info("Saving Regions")
@@ -114,11 +129,17 @@ def add_regions(g, path, filename, region_type):
         ensure_folder(cells_file)
         schema = {'geometry': 'Polygon',
                   'properties': {'index': 'int'}}
-        with fiona.open(cells_file, 'w', 'ESRI Shapefile', schema) as c:
-            for i in range(g.vcount()):
-                writable = shapely.geometry.mapping(shapely.geometry.shape(g.vs[i]['cell']))
-                c.write({'geometry': writable,
-                         'properties': {'index': i}})
+        h = open(cells_file[:-4]+'.dbf', 'a')
+        try:
+            multithreading.lock_file_handle(h)
+            with fiona.open(cells_file, 'w', 'ESRI Shapefile', schema) as c:
+                for i in range(g.vcount()):
+                    writable = shapely.geometry.mapping(shapely.geometry.shape(g.vs[i]['cell']))
+                    c.write({'geometry': writable,
+                             'properties': {'index': i}})
+        finally:
+            multithreading.unlock_file_handle(h)
+            h.close()
 
 
 def layout_position(g):
@@ -186,13 +207,13 @@ def _fix_unbounded_regions(vor, length):
         (a, b) = vor.ridge_points[i]
         (x, y) = vor.ridge_vertices[i]
 
-        if x is not -1 and y is not -1:
+        if x != -1 and y != -1:
             # this is a bounded ridge
             continue
 
         # determine which point is unbounded
-        unbounded = 0 if x is -1 else 1
-        bounded = 1 if x is -1 else 0
+        unbounded = 0 if x == -1 else 1
+        bounded = 1 if x == -1 else 0
 
         ### find the far point ###
         # find a vector tangent to the ridge
@@ -214,8 +235,8 @@ def _fix_unbounded_regions(vor, length):
             close_i = r.index(vor.ridge_vertices[i][bounded])
             inf_i = r.index(-1)
             # case where close and inf are on the ends of the list
-            if inf_i is 0 and close_i is len(r)-1 or \
-               inf_i is len(r)-1 and close_i is 0:
+            if inf_i == 0 and close_i == len(r)-1 or \
+               inf_i == len(r)-1 and close_i == 0:
                 # put the new point at the end
                 r.append(len(vor.vertices))
             else:
@@ -230,6 +251,7 @@ def _fix_unbounded_regions(vor, length):
         try:
             r.remove(-1)
         except ValueError:
+            # if this was a bounded region there won't be a -1
             pass
 
 
@@ -278,9 +300,6 @@ def create_voronoi_regions(g, bounds):
 def clip_cells(g, bounds):
     """ Clips all the cells in a graph to a bounding polygon.
 
-        This algorithm is run in parallel because it may take a while if there
-        are many vertices in the given graph.
-
         :param g: The graph containing nodes with cells to clip. Each vertex
         should have a 'cell' attribute representing the area of influence of
         the cell.
@@ -328,238 +347,31 @@ def get_communities(g, n, path, filename, algorithm='label_propagation'):
     """
     # load any preexisting clusters
     cluster_path = '{}/communities/{}/{}.json'.format(path, algorithm, filename)
-    if os.path.exists(cluster_path):
-        cluster_sets = json.load(open(cluster_path, 'r'))
-    else:
-        cluster_sets = []
-    logger.info('Loaded {} communities'.format(len(cluster_sets)))
-    # add new clusters if needed
-    while len(cluster_sets) < n:
-        logger.debug('{} / {} communities'.format(len(cluster_sets), n))
-        clustering = _algorithms[algorithm](g)
-        cluster_sets.append({'membership': clustering.membership,
-                             'modularity_params':clustering._modularity_params})
-    # save the cluster sets
     ensure_folder(cluster_path)
-    json.dump(cluster_sets, open(cluster_path, 'w'))
+    h = open(cluster_path, 'a')
+    try:
+        multithreading.lock_file_handle(h)
+        try:
+            cluster_sets = json.load(open(cluster_path, 'r'))
+        except ValueError:
+            # the file is probably empty because we just made it
+            cluster_sets = []
+        logger.info('Loaded {} communities'.format(len(cluster_sets)))
+        # add new clusters if needed
+        while len(cluster_sets) < n:
+            logger.debug('{} / {} communities'.format(len(cluster_sets), n))
+            clustering = _algorithms[algorithm](g)
+            cluster_sets.append({'membership': clustering.membership,
+                                 'modularity_params':clustering._modularity_params})
+        # save the cluster sets
+        json.dump(cluster_sets, open(cluster_path, 'w'))
+    finally:
+        multithreading.unlock_file_handle(h)
+        h.close()
 
     # construct a list of objects
     clusters = [igraph.VertexClustering(g, **c) for c in cluster_sets]
     return clusters[:n]  # return only the first n
-
-
-def _collapse_duplicate_areas(temp_list):
-    """ Collapses any duplicate areas in the given dictionary into a single
-        key with a greater weight.
-
-        Takes list<shapes>
-        Returns map<shape, int>
-    """
-    # Reduce all borders to unique Polygons
-    line_dict = dict()
-    while len(temp_list) > 0:
-        p = temp_list.pop()
-        # convert polygon to line
-        if p.geom_type == 'Polygon':
-            p = [shapely.geometry.LineString(list(p.exterior.coords))]
-        elif p.geom_type == 'MultiPolygon':
-            p = [shapely.geometry.LineString(list(pi.exterior.coords)) for pi in p]
-        else:
-            logger.warn('Unrecognized region geometry {}, ignoring'.format(p.geom_type))
-
-        for poly in p:
-            exists = False
-            for q in line_dict.keys():
-                if poly.equals(q):
-                    line_dict[q] += 1
-                    exists = True
-            if not exists:
-                line_dict[poly] = 1
-
-    return line_dict
-
-
-def _separate_borders(line_dict):
-    """ Separates the borders defined by the given dictionary into individual,
-        non-intersecting line segments. The value in the dictionary represents
-        the number of times the given segment appeared in the original list.
-
-        Takes map<shape, int>
-        Returns map<shape, int>
-    """
-    # Assign weights
-    unique_borders = dict()
-    done = False
-    while not done:
-        done = True
-        logger.debug('{} / {} borders'.format(len(unique_borders), len(line_dict)))
-        # iterate through the current version of line_dict
-        try:
-            for border in line_dict:
-                if not done:
-                    # if we have changed the dictionary do not try to continue
-                    break
-                # see if this border intersects any other borders in the dict
-                for other_border in line_dict:
-                    if not done:
-                        # if we have changed the dictionary do not try to continue
-                        break
-                    if border is other_border:
-                        # these are the same border, ignore
-                        continue
-                    # check for intersection
-                    i = border.intersection(other_border)
-                    if i.length > 0.0:
-                        logger.debug('adjusting borders')
-                        # corrupt the dictionary
-                        diff_border = border.difference(i)
-                        if diff_border.length > 0.0:
-                            # if there is nothing here do not add it to the dict
-                            line_dict[diff_border] = line_dict[border]
-                        diff_other_border = other_border.difference(i)
-                        if diff_other_border.length > 0.0:
-                            line_dict[diff_other_border] = line_dict[other_border]
-
-                        line_dict[i] = line_dict[border] + line_dict[other_border]
-                        del line_dict[border]
-                        del line_dict[other_border]
-                        # its innocence is gone forever
-                        done = False
-                if done:
-                    # this border does not intersect any other border
-                    # remove it from line_dict so we don't check it anymore
-                    unique_borders[border] = line_dict[border]
-                    del line_dict[border]
-                    done = False
-        except RuntimeError:
-            # the dict changed size, but we don't care
-            pass
-
-    # Account for any possible points in the current borders
-    for border in unique_borders.keys():
-        if border.geom_type == 'GeometryCollection':
-            bad_list = []
-            for line in border:
-                if line.geom_type == 'Point':
-                    bad_list.append(line)
-            # remove the offending border from the dict
-            weight = unique_borders[border]
-            del unique_borders[border]
-            # fix the border
-            for point in bad_list:
-                border = border.difference(point)
-            # add the healthy border back into the dict
-            unique_borders[border] = weight
-
-    # make sure none of the borders have area
-    # this can happen if communities overlap?
-    for border in unique_borders.keys():
-        if border.area > 0:
-            logger.warn('Border has area {}'.format(border))
-
-    return unique_borders
-
-
-def save_borders(path, filename, region_type='voronoi', iterations=10, algorithm='label_propagation'):
-    """ Saves a shapefile containing the borders for a given network.
-
-        The network is found using the path and filename arguments. If there
-        are already borders of the same type no new borders will be made.
-
-        :param path: The base path to the network of interest.
-        :param filename: The filename of the network of interest.
-        :param region_type: The type of region surrounding each node.
-        :param iterations: The number of iterations of community detection to
-        use for border detection. More iterations will show weak borders more
-        clearly.
-        :param algorithm: The community detection algorithm to use.
-
-        Examples
-        --------
-        >>> import os.path
-        >>> save_borders('data/testing',
-        ...              'test',
-        ...              region_type='voronoi',
-        ...              iterations=10,
-        ...              algorithm='random_walk')
-        >>> os.path.exists('data/testing/borders/voronoi/random_walk/test_10.shp')
-        True
-    """
-    borders_path = '{}/borders/{}/{}/{}_{}.shp'.format(path, region_type, algorithm, filename, iterations)
-    if os.path.exists(borders_path):
-        # these borders already exist, no need to compute them again
-        logger.info("Borders exist, skipping")
-        return
-
-    g = load_network(path, filename)
-    add_regions(g, path, filename, region_type)
-    clusters = get_communities(g, iterations, path, filename, algorithm)
-
-    communities = get_community_shapes(g, clusters)
-    # unpack list of lists into a single list
-    communities = [p for polys in communities for p in polys]
-
-    logger.info('Reducing Borders')
-
-    borders = quantify_borders(communities)
-
-    logger.info('Saving Borders')
-
-    ensure_folder(borders_path)
-    schema = {'geometry': 'MultiLineString',
-              'properties': {'weight': 'int'}}
-    with fiona.open(borders_path, 'w', 'ESRI Shapefile', schema) as c:
-        for border, w in borders.iteritems():
-            c.write({'geometry': shapely.geometry.mapping(shapely.geometry.shape(border)),
-                     'properties': {'weight': w}})
-
-
-def get_community_shapes(g, clusters):
-    """ Converts a list of igraph.VertexClustering objects into a list of
-        shapes representing each community.
-
-        :param g: The graph containing nodes with a cell attribute.
-        :param clusters: A list of igraph.VertexClustering objects representing
-        the sets of clusters.
-        :return: A list of shapes, one for each community.
-
-        Examples
-        --------
-        >>> g = load_network('data/testing', 'test')
-        >>> iterations = 5
-        >>> clusters = [g.community_multilevel(weights='weight') for _ in range(iterations)]
-        >>> shapes = get_community_shapes(g, clusters)
-        >>> num_comms = reduce(lambda s, c: s + len(c), clusters, 0)
-        >>> len(shapes) == num_comms
-        True
-    """
-    # get a list of shapes for each run of the clustering algorithm
-    communities = [[] for _ in range(len(clusters))]
-    for iteration in range(len(clusters)):
-        comms = clusters[iteration]
-        polys = [[] for _ in comms]  # group each region with the others in its community
-        for i in range(len(comms)):
-            for node_index in comms[i]:
-                p = g.vs[node_index]['cell']
-                if p.geom_type is "MultiPolygon":
-                    polys[i].extend(p)
-                else:
-                    polys[i].append(p)
-        # merge each list of polygons into a community
-        communities[iteration] = map(cascaded_union, polys)
-    return communities
-
-
-def quantify_borders(communities):
-    """ Breaks a list of polygons into a list of lines with weights.
-
-        :param communities: A list of all the communities found in a network.
-        :return: A map containing line segments as keys, and the number of
-        times that unique segment appears in the community polygons as values.
-    """
-    line_dict = _collapse_duplicate_areas(communities)
-
-    return _separate_borders(line_dict)
 
 
 def plot_border_map(border_path, pad=.05):
@@ -568,6 +380,7 @@ def plot_border_map(border_path, pad=.05):
         :param border_path: The path to the shape file containing the borders
         to plot.
         :param pad: The percentage of the width to pad the edge of the map.
+        :return: A figure with the borders
     """
     logger.info('Plotting Borders')
     fig = plt.figure()
@@ -607,12 +420,209 @@ def plot_border_map(border_path, pad=.05):
     return fig
 
 
+def get_adjacency_network(g, path, filename, region_type):
+    """ Gets a network representing the physical adjacency of another network.
+
+        :param g: The network to use as a base. The vertices of this network
+        must have a cell attribute. If two cells have an intersection of
+        non-zero length then they are considered adjacent.
+        :param path: The base path to the network. The algorithm uses this path
+        to cache temporary results.
+        :param filename: The filename of the network. Also used for caching.
+        :param region_type: The type of regions contained in the cell attribute
+        of the base network. This is also used for caching.
+        :return: An igraph.Graph object. All vertex attributes of the base
+        network and the new network should be the same. Any attributes that
+        cannot be written to a file by igraph (except cell) may not be present.
+
+        Examples
+        --------
+        >>> path = 'data/testing'
+        >>> filename = 'test'
+        >>> region_type = 'zip'
+        >>> g = load_network(path, filename)
+        >>> add_regions(g, path, filename, region_type)
+        >>> adj = get_adjacency_network(g, path, filename, region_type)
+        >>> adj.vcount() == g.vcount()
+        True
+    """
+    network_path = os.path.join(path, 'regions', region_type, filename+'.graphml')
+    ensure_folder(network_path)
+    if os.path.exists(network_path):
+        logger.info('Loading Adjacency Network')
+        h = open(network_path, 'r')
+        try:
+            multithreading.lock_file_handle(h)
+            return igraph.Graph.Read(network_path)
+        finally:
+            multithreading.unlock_file_handle(h)
+            h.close()
+    else:
+        logger.info('Creating Adjacency Network')
+        info = [v.attributes() for v in g.vs]
+        adj = network_creation.get_graph(info,
+                                         lambda a, b: a['cell'].intersection(b['cell']).length > 0)
+        h = open(network_path, 'a')
+        try:
+            multithreading.lock_file_handle(h)
+            adj.write_graphml(network_path)
+        finally:
+            multithreading.unlock_file_handle(h)
+            h.close()
+
+        return adj
+
+
+def find_border_weight(comms_runs, a, b):
+    """ Finds the weight of the border between two nodes.
+
+        Finds the number of times the two given nodes appear in different
+        communities. This is the weight of the border between the two nodes,
+        given they share a border.
+
+        :param comms_runs: The list of clusters to search.
+        :param a: The first node.
+        :param b: The second node.
+        :return: The weight of the border between the given nodes.
+    """
+    return reduce(lambda w, comms: w+1 if comms.membership[a] != comms.membership[b] else w,
+                  comms_runs,
+                  0)
+
+
+def get_border_network(path, filename, region_type, algorithm, iterations):
+    """ Finds a network representing the borders between communities.
+
+        :param path: The base path to the network of crimes.
+        :param filename: The filename of the network of crimes.
+        :param region_type: The type of regions around each vertex.
+        :param algorithm: The community detection algorithm to use.
+        :param iterations: The number of runs of the community detection algorithm.
+        :return: An `igraph.Graph` object where the weights of edges between
+        two vertices represent the strength of a border between them.
+
+        Examples
+        --------
+        >>> path = 'data/testing'
+        >>> filename = 'test'
+        >>> bn = get_border_network(path, filename, 'voronoi', 'label_propagation', 30)
+        >>> bn.write_graphml('{}/borders/{}.graphml'.format(path, filename))
+    """
+    border_path = os.path.join(path, 'borders', region_type, algorithm,
+                               '{}_{}.graphml'.format(filename, iterations))
+    ensure_folder(border_path)
+    if os.path.exists(border_path):
+        logger.info('Loading Border Network')
+        h = open(border_path, 'r')
+        try:
+            multithreading.lock_file_handle(h)
+            border_network = igraph.Graph.Read(border_path)
+        finally:
+            multithreading.unlock_file_handle(h)
+            h.close()
+        add_regions(border_network, path, filename, region_type)
+        return border_network
+    else:
+        # create a network showing the physical adjacency of each cell
+        g = load_network(path, filename)
+
+        add_regions(g, path, filename, region_type)
+
+        border_network = get_adjacency_network(g, path, filename, region_type)
+        add_regions(border_network, path, filename, region_type)
+
+        if 'id' in border_network.vs.attributes():
+            # get rid of it because it causes a warning
+            del border_network.vs['id']
+
+        # get the list of communities to use
+        comms = get_communities(g, iterations, path, filename, algorithm)
+
+        logger.info('Creating Border Network')
+        # change the weights on the edges to reflect the border weight
+        for e in border_network.es:
+            e['weight'] = find_border_weight(comms, e.source, e.target)
+
+        # save the network
+        h = open(border_path, 'a')
+        try:
+            multithreading.lock_file_handle(h)
+            border_network.write_graphml(border_path)
+        finally:
+            multithreading.unlock_file_handle(h)
+            h.close()
+
+        return border_network
+
+
+def save_borders(path, filename, region_type, iterations, algorithm):
+    """ Saves a shapefile containing the borders found a network.
+
+        Finds a border network containing the information about any borders.
+        Uses the cell attribute of the vertices and the weight attribute of the
+        edges to build the shapes of the borders between communities.
+
+        :param path: The base path to the network of crimes.
+        :param filename: The filename of the crimes network.
+        :param region_type: The type of region surrounding each vertex.
+        :param iterations: The number of iterations of the community detection algorithm.
+        :param algorithm: The community detection algorithm to use.
+
+        Examples
+        --------
+        >>> path = 'data/testing'
+        >>> filename = 'test'
+        >>> iterations = 30
+        >>> save_borders(path, filename, 'zip', iterations, 'random_walk')
+        >>> fig = plot_border_map('{}/borders/{}_{}'.format(path, filename, iterations))
+        >>> fig.savefig('test.svg')
+    """
+    borders_path = os.path.join(path, 'borders', region_type, algorithm,
+                                '{}_{}.shp'.format(filename, iterations))
+    if os.path.exists(borders_path):
+        # skip
+        logger.info("Borders Exist, skipping")
+        return
+    border_network = get_border_network(path, filename, region_type, algorithm, iterations)
+    borders = dict()
+    for e in border_network.es:
+        if e['weight'] > 0:
+            line = border_network.vs[e.source]['cell'].intersection(border_network.vs[e.target]['cell'])
+
+            # remove any points that might have snuck in
+            if line.geom_type == 'GeometryCollection':
+                points = [shp for shp in line if shp.geom_type == 'Point']
+                for p in points:
+                    line = line.difference(p)
+
+            if line.geom_type == 'LineString' or line.geom_type == 'MultiLineString':
+                borders[line] = e['weight']
+            elif line.geom_type == 'Polygon' or line.geom_type == 'MultiPolygon':
+                borders[line.boundary] = e['weight']
+            else:
+                logger.error('Unknown border geometry {}, skipping'.format(line.geom_type))
+
+    ensure_folder(borders_path)
+    schema = {'geometry': 'MultiLineString',
+              'properties': {'weight': 'int'}}
+    h = open(borders_path[:-4]+'.dbf', 'a')
+    try:
+        multithreading.lock_file_handle(h)
+        with fiona.open(borders_path, 'w', 'ESRI Shapefile', schema) as c:
+            for border, _w in borders.iteritems():
+                c.write({'geometry': shapely.geometry.mapping(shapely.geometry.shape(border)),
+                         'properties': {'weight': _w}})
+    finally:
+        multithreading.unlock_file_handle(h)
+        h.close()
+
+
 if __name__ == '__main__':
     # write info and debug to different files
     logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
     fiona.log.setLevel(logging.WARNING)  # I don't care about the fiona logs
 
-    # params = multithreading.combinations(city=['los_angels', 'baltimore'],
+    # params = multithreading.combinations(city=['los_angeles', 'baltimore'],
     #                                      distance=[3.2, 2.4, 1.6, .8, .1],
     #                                      node_type=['crime', 'zip'],
     #                                      region_type=['voronoi', 'zip'],
@@ -625,12 +635,15 @@ if __name__ == '__main__':
     #                                      iterations=[30])
 
     params = multithreading.combinations(city=['los_angeles', 'baltimore'],
-                                         distance=[3.2, 2.4, 1.6, .8],
-                                         node_type=['crime'],
-                                         region_type=['voronoi'],
+                                         distance=[3.2, 2.4, 1.6, .8, .1],
+                                         node_type=['crime', 'zip'],
+                                         region_type=['voronoi', 'zip'],
                                          algorithm=['random_walk', 'label_propagation'],
-                                         filename=['30dec2010'],
+                                         filename=['dec2010', '17dec2010', '30dec2010'],
                                          iterations=[30])
+
+    # filter out bad combinations
+    params = filter(lambda d: d['node_type'] != 'crime' or d['region_type'] != 'zip', params)
 
     def work(city, distance, node_type, region_type, algorithm, filename, iterations):
         try:
@@ -650,24 +663,21 @@ if __name__ == '__main__':
             path = 'data/{}/distance/{}/{}'.format(city, distance, node_type)
             network = load_network(path, filename)
             add_regions(network, path, filename, region_type)
+
             _ = get_communities(network, iterations, path, filename, algorithm=algorithm)
-            save_borders(path,
-                         filename,
-                         iterations=iterations,
-                         algorithm=algorithm,
-                         region_type=region_type,
-                         parallel=False)
-            #
-            # figure_path = 'output/{}.svg'.format(unique_id)
-            # if not os.path.exists(figure_path):
-            #     fig = plot_border_map('{}/borders/{}/{}/{}_{}'.format(path,
-            #                                                           region_type,
-            #                                                           algorithm,
-            #                                                           filename,
-            #                                                           iterations))
-            #     fig.savefig(figure_path)
-            # else:
-            #     logger.info('Figure Exists, skipping')
+
+            save_borders(path, filename, region_type, iterations, algorithm)
+
+            figure_path = 'output/{}.svg'.format(unique_id)
+            if not os.path.exists(figure_path):
+                fig = plot_border_map('{}/borders/{}/{}/{}_{}'.format(path,
+                                                                      region_type,
+                                                                      algorithm,
+                                                                      filename,
+                                                                      iterations))
+                fig.savefig(figure_path)
+            else:
+                logger.info('Figure Exists, skipping')
 
             logger.info('Done!')
             return True
@@ -675,6 +685,8 @@ if __name__ == '__main__':
             logger.error('Failed!', exc_info=True)
             return False
 
-    results = multithreading.map_kwargs(work, params)
-    for r in zip(params, results):
-        logger.info(r)
+    _results = multithreading.map_kwargs(work, params)
+    logger.info(_results)
+    for _r in zip(params, _results):
+        if not _r[1]:
+            logger.info('{} => {}'.format(_r[0].values(), _r[1]))

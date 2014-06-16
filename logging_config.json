@@ -36,6 +36,6 @@
 
     "root": {
         "level": "DEBUG",
-        "handlers": ["infoHandle", "debugHandle"]
+        "handlers": ["infoHandle", "debugHandle", "warningHandle"]
     }
 }

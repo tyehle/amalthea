@@ -7,6 +7,7 @@ __author__ = 'tobin'
 import logging
 import multiprocessing
 import itertools
+import fcntl
 
 logger = logging.getLogger(__name__)
 
@@ -73,3 +74,45 @@ def map_kwargs(func, items):
     """
     pool = multiprocessing.Pool()
     return pool.map(Worker(func), items)
+
+
+def lock_file_handle(handle):
+    """ Locks a file for synchronous activities.
+
+        This will block the current thread until the lock can be acquired.
+
+        :param handle: A file handle object pointing to the file to be locked.
+
+        Examples
+        --------
+        >>> import json
+        >>> h = open('test.json', 'r')
+        >>> try:
+        >>>   lock_file_handle(h)
+        >>>   print(json.load(h))
+        >>> finally:
+        >>>   unlock_file_handle(h)
+        >>>   h.close()
+    """
+    fcntl.flock(handle, fcntl.LOCK_EX)
+
+
+def unlock_file_handle(handle):
+    """ Unlocks a file after finishing synchronous activities.
+
+        This file handle object must be the same one that was previously locked.
+
+        :param handle: The file handle to be unlocked
+
+        Examples
+        --------
+        >>> import json
+        >>> h = open('test.json', 'r')
+        >>> try:
+        >>>   lock_file_handle(h)
+        >>>   print(json.load(h))
+        >>> finally:
+        >>>   unlock_file_handle(h)
+        >>>   h.close()
+    """
+    fcntl.flock(handle, fcntl.LOCK_UN)

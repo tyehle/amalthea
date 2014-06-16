@@ -4,5 +4,5 @@ syntax: glob
 *.pyc
 *~
 .idea/*
-./data/*
+./data*
 ./output/*

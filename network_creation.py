@@ -2,6 +2,9 @@ import pymongo
 import igraph
 import math
 from collections import Counter
+import logging
+
+logger = logging.getLogger(__name__)
 
 # set up the connection to the db
 client = pymongo.MongoClient('163.118.78.22', 27017)
@@ -24,11 +27,11 @@ def time_window_graph(nodes, node_attributes, window):
         string_attrs = {str(k): v for k, v in attr.iteritems()}
         g.add_vertex(**string_attrs)
     
-    print('added {0} nodes'.format(g.vcount()))
+    logger.debug('added {0} nodes'.format(g.vcount()))
 
     for i in range(len(nodes)):
         for j in range(i+1, len(nodes)):
-            print('{0},{1}'.format(i, j))
+            logger.debug('{0},{1}'.format(i, j))
             # add an edge every time there is a crime within the window
 
             # look at each crime in this list
@@ -109,7 +112,7 @@ def time_window_city_graph(time_window, city_names, node_limit=None):
 
         if len(zs) is 0:
             # print an warning and ignore this city
-            print('Warning: no zip codes found for \"{0}, {1}\"'.format(name, state))
+            logger.warning('Warning: no zip codes found for \"{0}, {1}\"'.format(name, state))
             continue
 
         # find the average (lat,lon)
@@ -142,7 +145,7 @@ def time_window_area_graph(time_window, areas, node_attributes, node_limit=None)
         # store as a list, not as a cursor
         in_area = [i for i in in_area]
 
-        print('{0} seconds;\t{1} zip codes;\t{2} crimes'.format(time.time() - start, len(area), len(in_area)))
+        logger.debug('{0} seconds;\t{1} zip codes;\t{2} crimes'.format(time.time() - start, len(area), len(in_area)))
         #in_area = sorted(d, key=lambda x: x['date'])
         #print time.time() - start
         # if node_limit is not None:
@@ -232,7 +235,7 @@ def sequential_city_graph(city_names, crime_limit=None):
 
         if len(zips) is 0:
             # print a warning and ignore this city
-            print('Warning: no zip codes found for \"{0}, {1}\"'.format(city, state))
+            logger.warning('Warning: no zip codes found for \"{0}, {1}\"'.format(city, state))
             continue
 
         # find the average (lat,lon)
@@ -268,7 +271,7 @@ def sequential_area_graph(areas, crime_in_area, crime_list):
         # simplify the graph after every thousand to make adding more edges faster
         if count % 1000 is 0:
             g.simplify(combine_edges=sum)
-            print(count)
+            logger.debug(count)
         count += 1
         # link to the previous vertex
         if last_vertex is not None:
@@ -524,7 +527,7 @@ def get_graph(attribute_list, is_associated, get_id=None, combination_rules=None
     edges = dict()
     for i in range(len(attribute_list)):
         if i % 100 is 0:
-            print('{0} / {1} : {2} edges'.format(i, len(attribute_list), len(edges)))
+            logger.debug('{0} / {1} : {2} edges'.format(i, len(attribute_list), len(edges)))
 
         # add edges to the current vertex
         for p in range(i+1, len(attribute_list)):
