@@ -9,13 +9,12 @@ import numpy as np
 from shapely.ops import cascaded_union
 import shapely.geometry
 import fiona
-import matplotlib.pyplot as plt
-from mpl_toolkits.basemap import Basemap
 import os.path
 import json
 import multithreading
 import logging.config
 import network_creation
+import plotting
 
 _client = pymongo.MongoClient('163.118.78.22', 27017)
 _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
@@ -374,52 +373,6 @@ def get_communities(g, n, path, filename, algorithm='label_propagation'):
     return clusters[:n]  # return only the first n
 
 
-def plot_border_map(border_path, pad=.05):
-    """ Plots the borders in a shapefile.
-
-        :param border_path: The path to the shape file containing the borders
-        to plot.
-        :param pad: The percentage of the width to pad the edge of the map.
-        :return: A figure with the borders
-    """
-    logger.info('Plotting Borders')
-    fig = plt.figure()
-    ax = fig.add_subplot()
-    union = cascaded_union([shapely.geometry.shape(p['geometry']) for p in
-                            fiona.open(border_path+'.shp')])
-    (llx, lly, urx, ury) = union.bounds
-    # assume we are in the northern hemisphere, west of the meridian
-    width = urx - llx
-    height = ury - lly
-    llx -= pad * width
-    urx += pad * width
-    lly -= pad * height
-    ury += pad * height
-    m = Basemap(resolution='h',
-                projection='merc',
-                llcrnrlon=llx,
-                llcrnrlat=lly,
-                urcrnrlon=urx,
-                urcrnrlat=ury,
-                ax=ax)
-    m.readshapefile(border_path, 'comm_bounds', drawbounds=False)
-    m.drawmapboundary(color='k', linewidth=1.0, fill_color='#006699')
-    m.fillcontinents(color='.6', zorder=0)
-    colormap = plt.get_cmap('gist_heat')
-    max_weight = max([border['weight'] for border in m.comm_bounds_info])
-    for border, shape in zip(m.comm_bounds_info, m.comm_bounds):
-        xx, yy = zip(*shape)
-        m.plot(xx, yy, linewidth=2, color=colormap(border['weight'] / float(max_weight)))
-        # m.plot(xx, yy, linewidth=1, alpha=border['weight'] / float(max_weight), color='blue')
-
-    m.drawcoastlines(linewidth=1)
-
-    # TODO: Make the color bar actually work
-    # m.colorbar()
-
-    return fig
-
-
 def get_adjacency_network(g, path, filename, region_type):
     """ Gets a network representing the physical adjacency of another network.
 
@@ -570,11 +523,12 @@ def save_borders(path, filename, region_type, iterations, algorithm):
 
         Examples
         --------
+        >>> import plotting
         >>> path = 'data/testing'
         >>> filename = 'test'
         >>> iterations = 30
         >>> save_borders(path, filename, 'zip', iterations, 'random_walk')
-        >>> fig = plot_border_map('{}/borders/{}_{}'.format(path, filename, iterations))
+        >>> fig = plotting.get_border_fig('{}/borders/{}_{}'.format(path, filename, iterations))
         >>> fig.savefig('test.svg')
     """
     borders_path = os.path.join(path, 'borders', region_type, algorithm,
@@ -622,18 +576,6 @@ if __name__ == '__main__':
     logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
     fiona.log.setLevel(logging.WARNING)  # I don't care about the fiona logs
 
-    # params = multithreading.combinations(city=['los_angeles', 'baltimore'],
-    #                                      distance=[3.2, 2.4, 1.6, .8, .1],
-    #                                      node_type=['crime', 'zip'],
-    #                                      region_type=['voronoi', 'zip'],
-    #                                      algorithm=['random_walk',
-    #                                                 'eigenvector',
-    #                                                 'label_propagation',
-    #                                                 'fast_greedy',
-    #                                                 'multilevel'],
-    #                                      filename=['dec2010', '17dec2010', '30dec2010'],
-    #                                      iterations=[30])
-
     params = multithreading.combinations(city=['los_angeles', 'baltimore'],
                                          distance=[3.2, 2.4, 1.6, .8, .1],
                                          node_type=['crime', 'zip'],
@@ -670,11 +612,11 @@ if __name__ == '__main__':
 
             figure_path = 'output/{}.svg'.format(unique_id)
             if not os.path.exists(figure_path):
-                fig = plot_border_map('{}/borders/{}/{}/{}_{}'.format(path,
-                                                                      region_type,
-                                                                      algorithm,
-                                                                      filename,
-                                                                      iterations))
+                fig = plotting.get_border_fig('{}/borders/{}/{}/{}_{}'.format(path,
+                                                                              region_type,
+                                                                              algorithm,
+                                                                              filename,
+                                                                              iterations))
                 fig.savefig(figure_path)
             else:
                 logger.info('Figure Exists, skipping')
