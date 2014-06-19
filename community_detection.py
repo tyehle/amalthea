@@ -1,7 +1,5 @@
 __author__ = 'Tobin Yehle'
 
-import matplotlib
-matplotlib.use('Agg')  # this fixes issues when executing over ssh
 import igraph
 import pymongo
 from scipy.spatial import Voronoi
@@ -413,6 +411,8 @@ def get_adjacency_network(g, path, filename, region_type):
     else:
         logger.info('Creating Adjacency Network')
         info = [v.attributes() for v in g.vs]
+        for attrs in info:
+            attrs.pop('id', None)
         adj = network_creation.get_graph(info,
                                          lambda a, b: a['cell'].intersection(b['cell']).length > 0)
         h = open(network_path, 'a')
@@ -612,11 +612,7 @@ if __name__ == '__main__':
 
             figure_path = 'output/{}.svg'.format(unique_id)
             if not os.path.exists(figure_path):
-                fig = plotting.get_border_fig('{}/borders/{}/{}/{}_{}'.format(path,
-                                                                              region_type,
-                                                                              algorithm,
-                                                                              filename,
-                                                                              iterations))
+                fig = plotting.get_border_fig(path, region_type, algorithm, filename, iterations)
                 fig.savefig(figure_path)
             else:
                 logger.info('Figure Exists, skipping')
