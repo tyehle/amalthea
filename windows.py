@@ -6,7 +6,6 @@ from datetime import datetime
 client = MongoClient('163.118.78.22', 27017)
 db = client['crimes']
 crimes = db.crimes
-zips = db.zipcodes
 geom = db.geometry
 
 _datefmt = '%Y-%m-%d %H:%M:%S'
@@ -22,8 +21,6 @@ def date2str(d):
 
 def crime_window(start_date=None,
                  end_date=None,
-                 cities=None,
-                 states=None,
                  zipcodes=None,
                  crime_types=None,
                  max_size=None):
@@ -33,13 +30,8 @@ def crime_window(start_date=None,
         ----------
         start_date, end_date: datetime
             The output will contain only crimes within the given window.
-        cities, states: list
-            The output will contain only crimes in the given cities AND the
-            given states.
         zipcodes: list
-            Output will only contain crimes in the given zipcodes. This list
-            will override any constraints specified by the list of cities and
-            states.
+            Output will only contain crimes in the given zipcodes.
         crime_types: list
             The results will contain only crimes of the given type.
         max_size: int
@@ -73,21 +65,8 @@ def crime_window(start_date=None,
         else:
             limits['date'] = {'$lte': end_date}
 
-    zips_limits = dict()
-    if cities is not None:
-        zips_limits['city'] = {'$in': cities}
-    if states is not None:
-        zips_limits['state'] = {'$in': states}
-
     if zipcodes is not None:
-        if cities is not None or states is not None:
-            print("Warning: Overwriting city and state limitations!")
-            zips_limits = dict()
-
         limits['zipcode'] = {'$in': zipcodes}
-
-    if len(zips_limits) is not 0:
-        limits['zipcode'] = {'$in': [str(z['zip']) for z in zips.find(zips_limits)]}
 
     if crime_types is not None:
         limits['type'] = {'$in': crime_types}
@@ -95,9 +74,17 @@ def crime_window(start_date=None,
     if max_size is None:
         max_size = 0
 
-    c_window = crimes.find(limits, limit=max_size)
+    return normalize_data(crimes.find(limits, limit=max_size))
+
+
+def normalize_data(crime_list):
+    """ Normalizes the format of crimes from the database
+
+        :param crime_list: A list or Cursor containing crimes from the database
+        :return: A list containing the normalized data
+    """
     # convert keys to strings
-    data = [{str(k): v for k, v in data.iteritems()} for data in c_window]
+    data = [{str(k): v for k, v in data.iteritems()} for data in crime_list]
 
     for c in data:
         c['description'] = unidecode(c['description'])
@@ -107,6 +94,7 @@ def crime_window(start_date=None,
         c['date'] = date2str(c['date'])
 
     return data
+
 
 def zip_box(minlat, minlon, maxlat, maxlon):
     # Make a box
