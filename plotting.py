@@ -10,8 +10,11 @@ from random import random
 from matplotlib.collections import PatchCollection, PolyCollection
 from descartes import PolygonPatch
 import logging
+import matplotlib as mpl
 from mpl_toolkits.basemap import Basemap
 import community_detection
+import os 
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,7 @@ def get_cluster_fig(g, clustering):
     """
     cells = [cascaded_union([g.vs[i]['cell'] for i in nodes]) for nodes in clustering]
 
-    color_map = plt.get_cmap('Set1')
+    color_map = plt.get_cmap('Accent')
     fig = plt.figure()
 
     patches = []
@@ -128,6 +131,71 @@ def get_border_fig(path, filename, region_type, algorithm, iterations):
     return fig
 
 
+def get_census_fig(city, linkage, lev):
+    """ Plots zip code clusters in a shapefile.
+
+        :return: A figure with the clusters colored accordingly.
+    """
+    logger.info('Plotting zip code clusters.')
+
+    border_path = 'data/{}/census/{}'.format(city, linkage)
+    fig, ax = plt.subplots()
+    union = cascaded_union([shapely.geometry.shape(p['geometry']) for p in
+                            fiona.open(border_path+'.shp')])
+    (left, bottom, right, top) = union.bounds
+    # Assume we are in the northern hemisphere, west of the meridian
+    m = get_map(left, right, top, bottom, ax)
+
+    # Load clustered zipcodes 
+    m.readshapefile(border_path, 'zip_shapes', drawbounds=False)
+    verts = m.zip_shapes
+    maxc = max([i[lev] for i in m.zip_shapes_info])
+    z = np.array([(sh[lev]/ float(maxc)) * 500 for sh in m.zip_shapes_info])
+    coll = PolyCollection(verts, array=z, cmap=mpl.cm.jet, edgecolors='none')
+    ax.add_collection(coll)
+    plt.show()
+
+
+def get_census_borders_fig(city, borders_path, region_type, algorithm, filename, iterations, linkage, lev):
+    """ Plots network borderse from a shapefile overlaying zip code clusters from a shapefile.
+
+        :return: A figure with the clusters colored accordingly and overlaying crime borders.
+    """
+    logger.info('Plotting begin.')
+    border_path = '{}/borders/{}/{}/{}_{}'.format(city, borders_path,
+                                                  region_type,
+                                                  algorithm,
+                                                  filename,
+                                                  iterations)
+    zip_filename = '{}/census/{}'.format(city, linkage)
+    fig, ax = plt.subplots()
+    union = cascaded_union([shapely.geometry.shape(p['geometry']) for p in
+                            fiona.open(border_path+'.shp')])
+    (left, bottom, right, top) = union.bounds
+    # Assume we are in the northern hemisphere, west of the meridian
+    m = get_map(left, right, top, bottom, ax)
+
+    logger.info('Plotting borders')
+    # Read the borders
+    m.readshapefile(border_path, 'comm_bounds', drawbounds=False)
+    max_weight = max([border['weight'] for border in m.comm_bounds_info])
+    # Plot according to respective weight
+    for border, shape in zip(m.comm_bounds_info, m.comm_bounds):
+        xx, yy = zip(*shape)
+        m.plot(xx, yy, alpha=0.9, linewidth= 0.5 + (border['weight'] / float(max_weight)), color='black')
+
+    logger.info('Plotting clustered zipcodes')
+    # Read zip code clusters
+    m.readshapefile(zip_filename, 'comm_bounds', drawbounds=False)
+    verts = m.comm_bounds
+    maxc = max([i[lev] for i in m.comm_bounds_info])
+    # Plot according to color
+    z = np.array([(sh[lev]/ float(maxc)) * 500 for sh in m.comm_bounds_info])
+    coll = PolyCollection(verts, array=z, cmap=mpl.cm.Set1, edgecolors='none')
+    ax.add_collection(coll)
+    return fig
+
+
 def get_map(left, right, top, bottom, ax, pad=.05):
     """ Gets a Basemap instance for the given area.
 
@@ -197,13 +265,14 @@ def shade_regions_with_data(m, ax, path, filename, region_type):
 
 
 if __name__ == "__main__":
+    os.chdir('/Users/swhite/Documents/Amalthea')
     logging.basicConfig(level=logging.DEBUG)
-    _city = 'los_angeles'
-    _distance = 1.6
-    _node_type = 'crime'
+    _city = 'baltimore'
+    _distance = 2.4
+    _node_type = 'zip'
     _path = 'data/{}/distance/{}/{}'.format(_city, _distance, _node_type)
     _filename = 'dec2010'
-    _region_type = 'voronoi'
+    _region_type = 'zip'
     _algorithm = 'label_propagation'
     _iterations = 30
 
@@ -214,7 +283,14 @@ if __name__ == "__main__":
 
     # _fig = get_region_fig(_path, _filename, _region_type)
     # _fig = get_adjacency_fig(_path, _filename, _region_type)
-    _fig = get_border_fig(_path, _filename, _region_type, _algorithm, _iterations)
-    # _fig.set_size_inches(9, 9)
-    plt.savefig('test.png', dpi=400)
-    plt.show()
+    #_fig = get_border_fig(_path, _filename, _region_type, _algorithm, _iterations)
+    for i in ['L2', 'L3', 'L4', 'L5']:
+        print i
+        _fig = get_cluster_borders_fig(_path, _filename, 'baltimore_metro_euclidean_complete', i, _region_type, _algorithm, _iterations)
+        # _fig.set_size_inches(9, 9)
+        plt.savefig('test_complete_{}.png'.format(i), dpi=400)
+        plt.show()
+        _fig = get_cluster_borders_fig(_path, _filename, 'baltimore_metro_euclidean_single', i, _region_type, _algorithm, _iterations)
+        # _fig.set_size_inches(9, 9)
+        plt.savefig('test_single_{}.png'.format(i), dpi=400)
+        plt.show()

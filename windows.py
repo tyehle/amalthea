@@ -1,9 +1,3 @@
-"""
-Created on Tue May 21 02:03 2014
-
-@author: swhite
-"""
-
 from pymongo import MongoClient
 from shapely.geometry import asShape, Polygon
 from unidecode import unidecode

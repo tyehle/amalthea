@@ -152,7 +152,7 @@ def get_dynamic_graph(graph_creator, delta, initial, final, path, zipcodes = Non
         g.vs['y'] = [-x for x in g.vs['latitude']]
         g.vs['x'] = [x for x in g.vs['longitude']]
         g.vs['size'] = g.vs['description']/10.0
-        save_graph(g, '{}/{}_{}'.format(path, t.date(), t.time()))
+        save_graph(g, '{}/{}_{}.graphml'.format(path, t.date(), t.time()))
         t = cur_t 
 
 
