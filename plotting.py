@@ -13,7 +13,6 @@ import logging
 import matplotlib as mpl
 from mpl_toolkits.basemap import Basemap
 import community_detection
-import os 
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -92,6 +91,20 @@ def get_adjacency_fig(path, filename, region_type):
     return fig
 
 
+def get_network_fig(path, filename, region_type):
+    """ Get a figure showing a network on a map.
+    """
+    g = community_detection.load_network(path, filename)
+    community_detection.add_regions(g, path, filename, region_type)
+    fig, ax = plt.subplots()
+    union = cascaded_union(g.vs['cell'])
+    (left, bottom, right, top) = union.bounds
+    m = get_map(left, right, top, bottom, ax)
+    shade_regions_with_data(m, ax, path, filename, region_type)
+    add_graph_to_map(g, m)
+    return fig
+
+
 def get_border_fig(path, filename, region_type, algorithm, iterations):
     """ Plots the borders in a shapefile.
 
@@ -150,7 +163,7 @@ def get_census_fig(city, linkage, lev):
     m.readshapefile(border_path, 'zip_shapes', drawbounds=False)
     verts = m.zip_shapes
     maxc = max([i[lev] for i in m.zip_shapes_info])
-    z = np.array([(sh[lev]/ float(maxc)) * 500 for sh in m.zip_shapes_info])
+    z = np.array([(sh[lev] / float(maxc)) * 500 for sh in m.zip_shapes_info])
     coll = PolyCollection(verts, array=z, cmap=mpl.cm.jet, edgecolors='none')
     ax.add_collection(coll)
     plt.show()
@@ -182,7 +195,7 @@ def get_census_borders_fig(city, borders_path, region_type, algorithm, filename,
     # Plot according to respective weight
     for border, shape in zip(m.comm_bounds_info, m.comm_bounds):
         xx, yy = zip(*shape)
-        m.plot(xx, yy, alpha=0.9, linewidth= 0.5 + (border['weight'] / float(max_weight)), color='black')
+        m.plot(xx, yy, alpha=0.9, linewidth=0.5 + (border['weight'] / float(max_weight)), color='black')
 
     logger.info('Plotting clustered zipcodes')
     # Read zip code clusters
@@ -190,7 +203,7 @@ def get_census_borders_fig(city, borders_path, region_type, algorithm, filename,
     verts = m.comm_bounds
     maxc = max([i[lev] for i in m.comm_bounds_info])
     # Plot according to color
-    z = np.array([(sh[lev]/ float(maxc)) * 500 for sh in m.comm_bounds_info])
+    z = np.array([(sh[lev] / float(maxc)) * 500 for sh in m.comm_bounds_info])
     coll = PolyCollection(verts, array=z, cmap=mpl.cm.Set1, edgecolors='none')
     ax.add_collection(coll)
     return fig
@@ -265,14 +278,13 @@ def shade_regions_with_data(m, ax, path, filename, region_type):
 
 
 if __name__ == "__main__":
-    os.chdir('/Users/swhite/Documents/Amalthea')
     logging.basicConfig(level=logging.DEBUG)
     _city = 'baltimore'
-    _distance = 2.4
+    _distance = 1.6
     _node_type = 'zip'
     _path = 'data/{}/distance/{}/{}'.format(_city, _distance, _node_type)
     _filename = 'dec2010'
-    _region_type = 'zip'
+    _region_type = 'voronoi'
     _algorithm = 'label_propagation'
     _iterations = 30
 
@@ -284,13 +296,32 @@ if __name__ == "__main__":
     # _fig = get_region_fig(_path, _filename, _region_type)
     # _fig = get_adjacency_fig(_path, _filename, _region_type)
     #_fig = get_border_fig(_path, _filename, _region_type, _algorithm, _iterations)
-    for i in ['L2', 'L3', 'L4', 'L5']:
-        print i
-        _fig = get_cluster_borders_fig(_path, _filename, 'baltimore_metro_euclidean_complete', i, _region_type, _algorithm, _iterations)
-        # _fig.set_size_inches(9, 9)
-        plt.savefig('test_complete_{}.png'.format(i), dpi=400)
-        plt.show()
-        _fig = get_cluster_borders_fig(_path, _filename, 'baltimore_metro_euclidean_single', i, _region_type, _algorithm, _iterations)
-        # _fig.set_size_inches(9, 9)
-        plt.savefig('test_single_{}.png'.format(i), dpi=400)
-        plt.show()
+    _fig = get_network_fig(_path, _filename, _region_type)
+    # _fig = get_border_fig(_path, _filename, _region_type, _algorithm, _iterations)
+
+    # _fig.set_size_inches(9, 9)
+    plt.savefig('test.png', dpi=400)
+    plt.show()
+
+    # for i in ['L2', 'L3', 'L4', 'L5']:
+    #     print i
+    #     _fig = get_cluster_borders_fig(_path,
+    #                                    _filename,
+    #                                    'baltimore_metro_euclidean_complete',
+    #                                    i,
+    #                                    _region_type,
+    #                                    _algorithm,
+    #                                    _iterations)
+    #     # _fig.set_size_inches(9, 9)
+    #     plt.savefig('test_complete_{}.png'.format(i), dpi=400)
+    #     plt.show()
+    #     _fig = get_cluster_borders_fig(_path,
+    #                                    _filename,
+    #                                    'baltimore_metro_euclidean_single',
+    #                                    i,
+    #                                    _region_type,
+    #                                    _algorithm,
+    #                                    _iterations)
+    #     # _fig.set_size_inches(9, 9)
+    #     plt.savefig('test_single_{}.png'.format(i), dpi=400)
+    #     plt.show()
