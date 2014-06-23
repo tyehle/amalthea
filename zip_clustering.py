@@ -88,7 +88,7 @@ def cluster_zips(features, linkage, t):
 if __name__ == '__main__':
     import plotting
     import fiona
-    from shapely import mapping, asShape
+    from shapely.geometry import mapping, asShape
 
     os.chdir('/home/swhite/amalthea')
     cities = ['baltimore', 'los_angeles']
