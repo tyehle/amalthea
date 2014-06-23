@@ -7,7 +7,10 @@ import json
 import network_creation
 from windows import crime_window
 import os.path
+from math import ceil
+import logging.config
 
+logger = logging.getLogger(__name__)
 
 def save_graph(g, file_path):
     dir = os.path.dirname(os.path.abspath(file_path))
@@ -87,6 +90,70 @@ def analyze_graphs():
                                       g.components().giant().vcount())
                 print(stats)
                 output_file.write(stats)
+
+
+def get_dynamic_graph(graph_creator, delta, initial, final, path, zipcodes = None):
+    """ Creates graphs per each unit of delta time given a window of crime.
+
+        A crime window is created using the relevant given paremeters. For each
+        increment of delta between time initial and time final, a graph of the 
+        crime window for relevant times is saved as a .graphml file using a 
+        unique file name.
+
+        Parameters
+        ----------
+        graph_creator: function
+            Function that returns a igraph.Graph() with the parameters of interest specified (other than window).
+        delta: datetime.timedelta
+            Time difference of interest.
+        initial: datetime.datetime
+            Initial time of crimes used to retrieve crime window.
+        final: datetime.datetime
+            Final time of crimes used to retrieve crime window.
+        path:
+            String indicating where the dynamic graphs should be saved.
+        zipcodes: list
+            List of zip code strings.
+
+        Returns 
+        -------
+        .graphml
+            Multiple .graphml files with unique names indicative of the time 
+            delta at hand.
+
+        Examples
+        --------
+        >>> initial = datetime.datetime(2010, 1, 1)
+        >>> final = datetime.datetime(2010, 1, 8)
+        >>> graph_creator = lambda x: network_creation.distance_zip_graph(
+            x, 1.6) 
+        >>> delta = datetime.timedelta(days = 1)
+        >>> import json
+        >>> cities = json.load(open('cities.json'))
+        >>> path = 'amalthea/data/baltimore/distance/1.6/zip/networks'
+        >>> create_dynamic_graphs(graph_creator, delta, initial, final, zipcodes = cities['baltimore'], file_name = 'path' + '/')
+    """
+    # Create crime window
+    w = crime_window(start_date = initial, end_date = final, zipcodes = zipcodes)
+    # Calculte number of increments
+    increment = int(ceil((final - initial).total_seconds()/delta.total_seconds()))
+    t = initial
+    # Create graph for each increment
+    for c in range(increment):
+        logger.info('Creating graph {} of {}'.format(c, increment))
+        cur_t = t + delta
+        # Filter relevant crimes
+        c_relevant = []
+        for crime in w:
+            d = datetime.datetime.strptime(crime['date'], "%Y-%m-%d %H:%M:%S")
+            if t <= d < cur_t:
+                c_relevant.append(crime)
+        g = graph_creator(c_relevant)
+        g.vs['y'] = [-x for x in g.vs['latitude']]
+        g.vs['x'] = [x for x in g.vs['longitude']]
+        g.vs['size'] = g.vs['description']/10.0
+        save_graph(g, '{}/{}_{}'.format(path, t.date(), t.time()))
+        t = cur_t 
 
 
 if __name__ == '__main__':
