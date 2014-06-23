@@ -24,16 +24,16 @@ def retrieve_census(city,
                     var_names = []):
     """ Reads census data from files for variables of interest. Outputs a dictionary of features by zip code and a dictionary of variables.
     """
-    dir = os.path.dirname(os.path.abspath('data/{}/census/features.json'.format(city))) 
+    dir = os.path.abspath('data/{}/census/features.json'.format(city))
     if os.path.exists(dir):
         features = json.load(open('features.json', 'r'))
         var_names = json.load(open('var_names.json', 'r'))
     else:
-        os.chdir('/home/swhite/amalthea/aff_download')
         c = json.load(open('cities.json'))
         z_list = c[city]
         if len(var_names) == 0:
             count = 0
+            os.chdir('/home/swhite/amalthea/aff_download')
             with open(file_names[0]) as data:
                 traverse = csv.reader(data)
                 for row in traverse:
