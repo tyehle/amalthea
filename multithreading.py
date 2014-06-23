@@ -14,18 +14,31 @@ logger = logging.getLogger(__name__)
 
 class Worker(object):
     """ A pickleable object to store the function to perform. """
-    def __init__(self, do_work):
+    def __init__(self, do_work, failsafe=False):
         """ Make an object that know how to do the work we want done.
             :param do_work: A function that does the work we want done.
+            :param failsafe: If true wraps calls to do_work in a try catch to
+            prevent every job from dying if one of them encounters an error.
+            Any thread that error out will return false, and log the error.
         """
         self.do_work = do_work
+        self.failsafe = failsafe
 
     def __call__(self, args):
         """ Do the work this worker was build for.
             :param args: A dictionary of keyword arguments for the work function
             :return: The result of the work function
         """
-        return self.do_work(**args)
+        if self.failsafe:
+            try:
+                return self.do_work(**args)
+            except KeyboardInterrupt as e:
+                raise e
+            except Exception as e:
+                logger.exception(e)
+                return False
+        else:
+            return self.do_work(**args)
 
 
 def combinations(**kwargs):
@@ -50,7 +63,7 @@ def combinations(**kwargs):
     return params
 
 
-def map_kwargs(func, items):
+def map_kwargs(func, items, failsafe=False):
     """ Map a function over a list of keyword arguments
 
         Notes:  Do not pass a lambda in as the function.
@@ -72,8 +85,10 @@ def map_kwargs(func, items):
         >>> 'Smith, Tom' in all_names
         True
     """
-    pool = multiprocessing.Pool()
-    return pool.map(Worker(func), items)
+    pool = multiprocessing.Pool(4)
+    results = pool.map(Worker(func, failsafe), items)
+    pool.terminate()
+    return results
 
 
 def lock_file_handle(handle):

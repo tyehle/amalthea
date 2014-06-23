@@ -201,8 +201,8 @@ def _fix_unbounded_regions(vor, length):
 
     ### fix unbounded regions ###
     for i in range(len(vor.ridge_vertices)):
-        (a, b) = vor.ridge_points[i]
-        (x, y) = vor.ridge_vertices[i]
+        (a, b) = vor.ridge_points[i]  # centers of cells
+        (x, y) = vor.ridge_vertices[i]  # points where ridges meet
 
         if x != -1 and y != -1:
             # this is a bounded ridge
@@ -588,42 +588,38 @@ if __name__ == '__main__':
     params = filter(lambda d: d['node_type'] != 'crime' or d['region_type'] != 'zip', params)
 
     def work(city, distance, node_type, region_type, algorithm, filename, iterations):
-        try:
-            unique_id = '{}-{}-{}-{}-{}-{}-{}'.format(city,
-                                                      distance,
-                                                      node_type,
-                                                      region_type,
-                                                      algorithm,
-                                                      filename,
-                                                      iterations)
+        unique_id = '{}-{}-{}-{}-{}-{}-{}'.format(city,
+                                                  distance,
+                                                  node_type,
+                                                  region_type,
+                                                  algorithm,
+                                                  filename,
+                                                  iterations)
 
-            # The thread pool copies __main__, so this will change the name
-            # of the logger for only this thread
-            logger.name = unique_id
-            logger.info('Starting!')
+        # The thread pool copies __main__, so this will change the name
+        # of the logger for only this thread
+        logger.name = unique_id
+        logger.info('Starting!')
 
-            path = 'data/{}/distance/{}/{}'.format(city, distance, node_type)
-            network = load_network(path, filename)
-            add_regions(network, path, filename, region_type)
+        path = 'data/{}/distance/{}/{}'.format(city, distance, node_type)
+        network = load_network(path, filename)
+        add_regions(network, path, filename, region_type)
 
-            _ = get_communities(network, iterations, path, filename, algorithm=algorithm)
+        _ = get_communities(network, iterations, path, filename, algorithm=algorithm)
 
-            save_borders(path, filename, region_type, iterations, algorithm)
+        save_borders(path, filename, region_type, iterations, algorithm)
 
-            figure_path = 'output/{}.svg'.format(unique_id)
-            if not os.path.exists(figure_path):
-                fig = plotting.get_border_fig(path, region_type, algorithm, filename, iterations)
-                fig.savefig(figure_path)
-            else:
-                logger.info('Figure Exists, skipping')
+        figure_path = 'output/{}.svg'.format(unique_id)
+        if not os.path.exists(figure_path):
+            fig = plotting.get_border_fig(path, region_type, algorithm, filename, iterations)
+            fig.savefig(figure_path)
+        else:
+            logger.info('Figure Exists, skipping')
 
-            logger.info('Done!')
-            return True
-        except:
-            logger.error('Failed!', exc_info=True)
-            return False
+        logger.info('Done!')
+        return True
 
-    _results = multithreading.map_kwargs(work, params)
+    _results = multithreading.map_kwargs(work, params, failsafe=True)
     logger.info(_results)
     for _r in zip(params, _results):
         if not _r[1]:
