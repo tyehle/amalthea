@@ -26,8 +26,8 @@ def retrieve_census(city,
     """
     dir = os.path.abspath('data/{}/census/features.json'.format(city))
     if os.path.exists(dir):
-        features = json.load(open('features.json', 'r'))
-        var_names = json.load(open('var_names.json', 'r'))
+        features = json.load(open('data/baltimore/census/features.json', 'r'))
+        var_names = json.load(open('data/baltimore/census/var_names.json', 'r'))
     else:
         c = json.load(open('cities.json'))
         z_list = c[city]
