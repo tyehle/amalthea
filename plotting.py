@@ -1,7 +1,7 @@
 __author__ = 'tobin'
 
-# import matplotlib
-# matplotlib.use('Agg')  # this fixes issues when executing over ssh
+import matplotlib
+matplotlib.use('Agg')  # this fixes issues when executing over ssh
 import shapely.geometry
 from shapely.ops import cascaded_union
 import fiona
@@ -151,7 +151,7 @@ def get_census_fig(city, linkage, lev):
     """
     logger.info('Plotting zip code clusters.')
 
-    border_path = 'data/{}/census/{}'.format(city, linkage)
+    border_path = '/home/swhite/amalthea/data/{}/census/{}'.format(city, linkage)
     fig, ax = plt.subplots()
     union = cascaded_union([shapely.geometry.shape(p['geometry']) for p in
                             fiona.open(border_path+'.shp')])
@@ -166,7 +166,8 @@ def get_census_fig(city, linkage, lev):
     z = np.array([(sh[lev] / float(maxc)) * 500 for sh in m.zip_shapes_info])
     coll = PolyCollection(verts, array=z, cmap=mpl.cm.jet, edgecolors='none')
     ax.add_collection(coll)
-    plt.show()
+    # plt.show()
+    plt.savefig('{}_{}.png'.format(border_path, lev))
 
 
 def get_census_borders_fig(city, borders_path, region_type, algorithm, filename, iterations, linkage, lev):
