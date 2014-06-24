@@ -14,12 +14,10 @@ _geometry = _db.geometry
 def retrieve_census(city, 
                     file_names = ['ACS_12_5YR_DP02_with_ann.csv', 
                                  'ACS_12_5YR_DP03_with_ann.csv', 
-                                 'ACS_12_5YR_DP04_with_ann.csv',
-                                 'ACS_12_5YR_DP05_with_ann.csv'], 
+                                 'ACS_12_5YR_DP04_with_ann.csv'], 
                     cols = [[33, 237, 241, 321], 
                            [37, 247, 297, 289, 513], 
-                           [13, 185],
-                           [3]], 
+                           [13, 185]], 
                     features = dict(), 
                     var_names = []):
     """ Reads census data from files for variables of interest. Outputs a dictionary of features by zip code and a dictionary of variables.
@@ -103,13 +101,16 @@ if __name__ == '__main__':
                             'L4': 'int',
                             'L5': 'int',
                             'L6': 'int'} }
-    for i, city in enumerate(results):
-        trials = [('single', 50000), ('complete', 50000), ('average', 50000)]
+    for ind, city in enumerate(results):
+
+        trials = [('single', 20000), ('complete', 200000), ('average', 100000)]
         levels = []
+
         for s in trials:
-            os.chdir('/home/swhite/amalthea/data/{}/census/'.format(cities[i]))
+            os.chdir('/home/swhite/amalthea/data/{}/census/'.format(cities[ind]))
+            
             for i in range(6): 
-                levels.append(cluster_zips(city[0], s[0], (s[1] * .5**(i+1))))
+                levels.append(cluster_zips(city[0], s[0], (s[1] * .7**(i+1))))
                 if len(levels) == 6:
                     # Save clusters as shapefiles
                     with fiona.open('{}.shp'.format(s[0]), 'w', 'ESRI Shapefile', schema) as c:
@@ -126,7 +127,7 @@ if __name__ == '__main__':
                                               'L6': int(levels[5][i])} })
                     levs = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']
                     for l in levs:
-                        plotting.get_census_fig(cities[i], s[0], l)
+                        plotting.get_census_fig(cities[ind], s[0], l)
                     levels = []
 
 
