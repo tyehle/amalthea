@@ -1,21 +1,21 @@
 __author__ = 'Tobin Yehle'
 
-import math
 import igraph
-from datetime import datetime
+import datetime
 import json
 import network_creation
-from windows import crime_window
+from windows import crime_window, str2date
 import os.path
 from math import ceil
 import logging.config
 
 logger = logging.getLogger(__name__)
 
+
 def save_graph(g, file_path):
-    dir = os.path.dirname(os.path.abspath(file_path))
-    if not os.path.exists(dir):
-        os.makedirs(dir)
+    path = os.path.dirname(os.path.abspath(file_path))
+    if not os.path.exists(path):
+        os.makedirs(path)
     g.write_graphml(file_path)
 
 
@@ -92,7 +92,7 @@ def analyze_graphs():
                 output_file.write(stats)
 
 
-def get_dynamic_graph(graph_creator, delta, initial, final, path, zipcodes = None):
+def save_dynamic_distance_graph(initial, final, delta, area_name, distance, node_type, crime_types=None):
     """ Creates graphs per each unit of delta time given a window of crime.
 
         A crime window is created using the relevant given paremeters. For each
@@ -102,18 +102,20 @@ def get_dynamic_graph(graph_creator, delta, initial, final, path, zipcodes = Non
 
         Parameters
         ----------
-        graph_creator: function
-            Function that returns a igraph.Graph() with the parameters of interest specified (other than window).
-        delta: datetime.timedelta
-            Time difference of interest.
         initial: datetime.datetime
             Initial time of crimes used to retrieve crime window.
         final: datetime.datetime
             Final time of crimes used to retrieve crime window.
-        path:
-            String indicating where the dynamic graphs should be saved.
-        zipcodes: list
-            List of zip code strings.
+        delta: datetime.timedelta
+            Time difference of interest.
+        area_name:
+            String indicating the name of the city find crimes in.
+        distance: float
+            Maximum distance between linked crimes.
+        node_type: String
+            What each node in the network represents. Should be one of 'zip' or 'crime'.
+        crime_types: list
+            An optional additional parameter passed to `crime_window`
 
         Returns 
         -------
@@ -123,18 +125,16 @@ def get_dynamic_graph(graph_creator, delta, initial, final, path, zipcodes = Non
 
         Examples
         --------
-        >>> initial = datetime.datetime(2010, 1, 1)
-        >>> final = datetime.datetime(2010, 1, 8)
-        >>> graph_creator = lambda x: network_creation.distance_zip_graph(
-            x, 1.6) 
-        >>> delta = datetime.timedelta(days = 1)
-        >>> import json
-        >>> cities = json.load(open('cities.json'))
-        >>> path = 'amalthea/data/baltimore/distance/1.6/zip/networks'
-        >>> create_dynamic_graphs(graph_creator, delta, initial, final, zipcodes = cities['baltimore'], file_name = 'path' + '/')
+        >>> from datetime import datetime, timedelta
+        >>> initial = datetime(2010, 1, 1)
+        >>> final = datetime(2010, 1, 8)
+        >>> delta = timedelta(days=1)
+        >>> save_dynamic_distance_graph(initial, final, delta, 'baltimore', 1.6, 'zip')
     """
+    path = 'data/{}/distance/{}/{}'.format(area_name, distance, node_type)
+    zipcodes = json.load(open('cities.json', 'r'))[area_name]
     # Create crime window
-    w = crime_window(start_date = initial, end_date = final, zipcodes = zipcodes)
+    w = crime_window(start_date=initial, end_date=final, zipcodes=zipcodes, crime_types=crime_types)
     # Calculte number of increments
     increment = int(ceil((final - initial).total_seconds()/delta.total_seconds()))
     t = initial
@@ -145,17 +145,51 @@ def get_dynamic_graph(graph_creator, delta, initial, final, path, zipcodes = Non
         # Filter relevant crimes
         c_relevant = []
         for crime in w:
-            d = datetime.datetime.strptime(crime['date'], "%Y-%m-%d %H:%M:%S")
+            d = str2date(crime['date'])
             if t <= d < cur_t:
                 c_relevant.append(crime)
-        g = graph_creator(c_relevant)
+        g = network_creation.distance_graph(c_relevant, distance, node_type)
         g.vs['y'] = [-x for x in g.vs['latitude']]
         g.vs['x'] = [x for x in g.vs['longitude']]
-        g.vs['size'] = g.vs['description']/10.0
-        save_graph(g, '{}/{}_{}.graphml'.format(path, t.date(), t.time()))
+        # Size node proportional to node betweenness
+        m = max([g.betweenness(i) for i in g.vs])
+        g.vs['size'] = [((g.betweenness(i)/m) * 12) + 5 for i in g.vs]
+        save_graph(g, '{}/networks/{}_{}_{}_{}.graphml'.format(path, str(delta.days), initial.strftime('%m%d%Y'), final.strftime('%m%d%Y'), c))
+        #igraph.plot(g)
         t = cur_t 
 
 
 if __name__ == '__main__':
-    # analyze_graphs()
-    save_distance_zip_networks()
+    """ Create dynamic graphs for all of 2010 by days and weeks for baltimore and los angeles for multiple distance networks."""
+    from community_detection import get_dynamic_modularity, get_dynamic_node_betweenness
+    # Create dictionary
+    modularity_dict = dict()
+    centrality_dict = dict()
+    # Set up variables of interest
+    cities = json.load(open('cities.json', 'r'))
+    i = datetime.datetime(2010, 1, 1)
+    f = datetime.datetime(2011, 1, 1)
+    delta_day = datetime.timedelta(days = 1)
+    delta_week = datetime.timedelta(days = 7)
+    dist1 = 3.2
+    dist2 = 0.8
+    area1 = 'baltimore'
+    area2= 'los_angeles'
+    file_name = '{}_{}_'.format(i.strftime('%m%d%Y'), f.strftime('%m%d%Y'))
+    
+    # Iterate through variables of interest
+    for delta in [delta_day, delta_week]:
+        for dist in [dist1, dist2]:
+            for area in [area1, area2]:
+                save_dynamic_distance_graph(i, f, delta, area, dist, 'zip')
+                path = 'data/{}/distance/{}/zip'.format(area, str(dist))
+                dict_key = '{}-{}-{}'.format(area, dist, delta)
+                mod = get_dynamic_modularity(path, '{}_{}'.format(str(delta.days), file_name))
+                modularity_dict[dict_key] = mod
+                cent = []
+                for z in cities[area]:
+                    cent.append(get_dynamic_node_betweenness(path, '{}_{}'.format(str(delta.days), file_name), z))
+                centrality_dict[dict_key] = cent
+    
+    # Save as json
+    json.dump(open('2010_dynamic_analysis.json'), 'w')

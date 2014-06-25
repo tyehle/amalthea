@@ -412,6 +412,15 @@ def reduce_to_zip_graph(crime_graph):
     crime_graph.simplify(combine_edges=sum)
 
 
+def distance_graph(crime_list, distance, node_type):
+    if node_type == 'zip':
+        return distance_zip_graph(crime_list, distance)
+    elif node_type == 'crime':
+        return distance_crime_graph(crime_list, distance)
+    else:
+        raise NotImplementedError('{} node networks not implemented'.format(node_type))
+
+
 def distance_zip_graph(crime_list, distance):
     for c in crime_list:
         c['latitude'] = float(c['latitude'])
