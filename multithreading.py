@@ -85,8 +85,8 @@ def map_kwargs(func, items, failsafe=False):
         >>> 'Smith, Tom' in all_names
         True
     """
-    pool = multiprocessing.Pool(4)
-    results = pool.map(Worker(func, failsafe), items)
+    pool = multiprocessing.Pool()
+    results = pool.map(Worker(func, failsafe), items, chunksize=1)
     pool.terminate()
     return results
 
