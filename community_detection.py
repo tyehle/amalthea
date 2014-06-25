@@ -13,8 +13,6 @@ import multithreading
 import logging.config
 import network_creation
 import plotting
-import natsort
-import glob
 
 _client = pymongo.MongoClient('163.118.78.22', 27017)
 _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
@@ -22,11 +20,7 @@ _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').a
                'label_propagation': lambda g: g.community_label_propagation(weights='weight'),
                'fast_greedy': lambda g: g.community_fastgreedy(weights='weight').as_clustering(),
                'multilevel': lambda g: g.community_multilevel(weights='weight')}
-_centrality = {'betweenness': lambda g, node_zipcode: g.betweenness(g.vs.select(zipcode_eq=node_zipcode)[0]),
-'eigenvector': lambda g, node_zipcode: g.eigenvector_centrality(directed = False)[g.vs.select(zipcode_eq=node_zipcode)[0].index],
-'closeness': lambda g, node_zipcode: g.closeness(g.vs.select(zipcode_eq=node_zipcode)[0]),
-'degree': lambda g, node_zipcode: g.degree(g.vs.select(zipcode_eq=node_zipcode)[0])
-}
+
 
 logger = logging.getLogger(__name__)
 
@@ -579,32 +573,6 @@ def save_borders(path, filename, region_type, iterations, algorithm):
         h.close()
 
 
-def get_dynamic_modularity(path, filename):
-    mod_list = []
-    # file_list = os.listdir('{}/networks'.format(path))
-    os.chdir('{}/networks'.format(path))
-    file_list = natsort.natsorted(glob.glob('{}*.graphml'.format(filename)))
-    for f in file_list:
-        # if filename in f:
-        g = igraph.Graph.Read_GraphML('{}/networks/{}'.format(path, f))
-        clust = get_communities(g, 1, path, f, algorithm='multilevel')
-        mod_list.append(g.modularity(clust[0], weights = 'weight'))
-    return mod_list
-
-
-def get_dynamic_node_betweenness(path, filename, node_zipcode, measure):
-    c_list= []
-    # file_list = os.listdir('{}/networks'.format(path))
-    os.chdir('{}/networks'.format(path))
-    file_list = natsort.natsorted(glob.glob('{}*.graphml'.format(filename)))
-    for f in file_list:
-        # if filename in f:
-        g = igraph.Graph.Read_GraphML('{}/networks/{}'.format(path, f))
-        try:
-            c_list.append(_centrality[measure](g, node_zipcode))
-        except IndexError:
-            c_list.append(0.0)
-    return c_list
 
 
 
