@@ -43,10 +43,10 @@ def collapse_all_to_zip():
         --------
         >>> collapse_all_to_zip()
     """
-    networks = glob.glob('data/*/distance/*/crime/networks/*.graphml')
+    networks = glob.glob('data/*/*/distance/*/crime/networks/*.graphml')
     logger.info('{} networks found'.format(len(networks)))
     parts = [name.split('/') for name in networks]
-    paths = [(os.path.join(*p[:4]), p[-1]) for p in parts]
+    paths = [(os.path.join(*p[:5]), p[-1]) for p in parts]
 
     for base_path, filename in paths:
         logger.debug('{} : {}'.format(base_path, filename))
@@ -60,9 +60,16 @@ def collapse_all_to_zip():
         elif os.path.exists(crime_path):
             logger.info('Collapsing {}'.format(crime_path))
             # the crime network already exists, so grab it
-            g = igraph.Graph.Read(crime_path)
-            # reduce the network
-            network_creation.reduce_to_zip_graph(g)
+            try:
+                g = igraph.Graph.Read(crime_path)
+            except igraph.InternalError as e:
+                logger.error('Failed to read {}, skipping'.format(crime_path))
+                logger.exception(e)
+                continue
+            # only try to reduce the network if there are crimes in it
+            if g.vcount() > 0:
+                # reduce the network
+                network_creation.reduce_to_zip_graph(g)
             save_graph(g, zip_path)
         else:
             raise RuntimeError('Crime network not found {}'.format(crime_path))
@@ -155,20 +162,31 @@ def save_dynamic_distance_delta_graph(initial, final, delta_name, area_name,
         delta = datetime.timedelta(days=1)
     else:
         raise NotImplementedError('Unrecognized delta name: {}'.format(delta_name))
+    # Calculate number of increments
+    increment = int(ceil((final - initial).total_seconds()/delta.total_seconds()))
+
+    # make sure we need to build these networks
+    get_network_path = lambda start: '{}/networks/{}_{}.graphml'.format(path,
+                                                                        delta_name,
+                                                                        date_string(start))
+    paths = [get_network_path(initial + delta*i) for i in range(increment)]
+    all_exist = reduce(lambda all_good, p: all_good and os.path.exists(p), paths, True)
+    if all_exist:
+        return
+
     # Create crime window
     w = crime_window(start_date=initial, end_date=final, zipcodes=zipcodes, crime_types=crime_types)
     logger.info('{} crimes found'.format(len(w)))
-    # Calculate number of increments
-    increment = int(ceil((final - initial).total_seconds()/delta.total_seconds()))
+
     t = initial
     # Create graph for each increment
     for c in range(increment):
         logger.info('Creating graph {} of {}'.format(c, increment))
         cur_t = t + delta
-        # Filter crimes in this window
-        c_relevant = filter(lambda crime: t <= str2date(crime['date']) < cur_t, w)
-        network_path = '{}/networks/{}_{}.graphml'.format(path, delta_name, date_string(t))
+        network_path = get_network_path(t)
         if not os.path.exists(network_path):
+            # Filter crimes in this window
+            c_relevant = filter(lambda crime: t <= str2date(crime['date']) < cur_t, w)
             g = network_creation.distance_graph(c_relevant, distance, node_type)
             save_graph(g, network_path)
         else:
@@ -298,7 +316,7 @@ if __name__ == '__main__':
                                              distance=distances,
                                              node_type=node_types,
                                              crime_types=_crime_types)
-        multithreading.map_kwargs(save_dynamic_distance_year_graph, params)
+        map(lambda args: save_dynamic_distance_year_graph(**args), params)
     elif todo == 'collapse':
         collapse_all_to_zip()
     logger.info('Done!')
