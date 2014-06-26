@@ -2,7 +2,7 @@ __author__ = 'Tobin Yehle'
 
 import igraph
 import pymongo
-# from scipy.spatial import Voronoi
+from scipy.spatial import Voronoi
 import numpy as np
 from shapely.ops import cascaded_union
 import shapely.geometry
@@ -20,7 +20,11 @@ _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').a
                'label_propagation': lambda g: g.community_label_propagation(weights='weight'),
                'fast_greedy': lambda g: g.community_fastgreedy(weights='weight').as_clustering(),
                'multilevel': lambda g: g.community_multilevel(weights='weight')}
-
+_centrality = {'betweenness': lambda g, node_zipcode: g.betweenness(g.vs.select(zipcode_eq=node_zipcode)[0]),
+               'eigenvector': lambda g, node_zipcode: g.eigenvector_centrality(directed=False)
+               [g.vs.select(zipcode_eq=node_zipcode)[0].index],
+               'closeness': lambda g, node_zipcode: g.closeness(g.vs.select(zipcode_eq=node_zipcode)[0]),
+               'degree': lambda g, node_zipcode: g.degree(g.vs.select(zipcode_eq=node_zipcode)[0])}
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +121,8 @@ def add_regions(g, path, filename, region_type):
         elif region_type == 'zip':
             logger.info('Finding Zipcode Cells')
             geometry = _client['crimes'].geometry
-            g.vs['cell'] = [shapely.geometry.shape(geometry.find_one({'zip': node['zipcode']})['geometry']) for node in g.vs]
+            g.vs['cell'] = [shapely.geometry.shape(geometry.find_one({'zip': node['zipcode']})['geometry'])
+                            for node in g.vs]
         else:
             logger.warning("Unrecognized region type: '{}'".format(region_type))
             raise NotImplementedError('{} regions not implemented'.format(region_type))
@@ -244,7 +249,6 @@ def _fix_unbounded_regions(vor, length):
         # update the list of vertices
         vor.vertices = np.append(vor.vertices, [far_point], axis=0)
 
-    # TODO: Add an additional point if the bounded region is too small
     # remove the -1 from any region that has it (can change to replace if needed)
     for r in vor.regions:
         try:
@@ -274,7 +278,6 @@ def create_voronoi_regions(g, bounds):
         >>> 'cell' in g.vs.attributes()
         True
     """
-    # points = [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1], [2, 2]]
     points = [(c['x'], c['y']) for c in g.vs]
     vor = Voronoi(points)
 
@@ -361,9 +364,9 @@ def get_communities(g, n, path, filename, algorithm='label_propagation'):
             logger.debug('{} / {} communities'.format(len(cluster_sets), n))
             clustering = _algorithms[algorithm](g)
             cluster_sets.append({'membership': clustering.membership,
-                                 'modularity_params':clustering._modularity_params})
+                                 'modularity_params': clustering._modularity_params})
         # save the cluster sets
-        json.dump(cluster_sets, open(cluster_path, 'w'))
+        json.dump(cluster_sets, open(cluster_path, 'w'), indent=2)
     finally:
         multithreading.unlock_file_handle(h)
         h.close()
@@ -415,8 +418,12 @@ def get_adjacency_network(g, path, filename, region_type):
         info = [v.attributes() for v in g.vs]
         for attrs in info:
             attrs.pop('id', None)
-        adj = network_creation.get_graph(info,
-                                         lambda a, b: a['cell'].intersection(b['cell']).length > 0)
+        if region_type == 'voronoi':
+            adj = get_voronoi_adjacency(g)
+            # TODO: Get rid of bad edges
+        else:
+            adj = network_creation.get_graph(info,
+                                             lambda a, b: a['cell'].intersection(b['cell']).length > 0)
         h = open(network_path, 'a')
         try:
             multithreading.lock_file_handle(h)
@@ -426,6 +433,31 @@ def get_adjacency_network(g, path, filename, region_type):
             h.close()
 
         return adj
+
+
+def get_voronoi_adjacency(g):
+    """ Gets the adjacency network for a graph by regenerating the Voronoi
+        cells for each node.
+
+        Some cells considered adjacent may not be touching after the cells are clipped.
+
+        :param g: The graph to find the adjacency of. The graph must have the
+        latitude and longitude attributes for each vertex.
+        :return: A network where adjacent cells are connected by an edge.
+    """
+    layout_position(g)
+    vor = Voronoi([(c['x'], c['y']) for c in g.vs])
+
+    adj = igraph.Graph()
+    # copy all vertices from g
+    for c in g.vs:
+        attrs = c.attributes()
+        if 'id' in attrs:
+            del attrs['id']
+        adj.add_vertex(**attrs)
+    # add adjacency edges
+    adj.add_edges(vor.ridge_points)
+    return adj
 
 
 def find_border_weight(comms_runs, a, b):
@@ -497,6 +529,10 @@ def get_border_network(path, filename, region_type, algorithm, iterations):
         # change the weights on the edges to reflect the border weight
         for e in border_network.es:
             e['weight'] = find_border_weight(comms, e.source, e.target)
+        # remove 0 weight edges
+        border_network.delete_edges(lambda edge: edge['weight'] == 0)
+        # scale edges based on number of iterations
+        border_network.es['weight'] = [float(w) / iterations for w in border_network.es['weight']]
 
         # save the network
         h = open(border_path, 'a')
@@ -573,15 +609,13 @@ def save_borders(path, filename, region_type, iterations, algorithm):
         h.close()
 
 
-
-
-
 if __name__ == '__main__':
     # write info and debug to different files
     logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
     fiona.log.setLevel(logging.WARNING)  # I don't care about the fiona logs
 
     params = multithreading.combinations(city=['los_angeles', 'baltimore'],
+                                         crime_name=['all'],
                                          distance=[3.2, 2.4, 1.6, .8, .1],
                                          node_type=['crime', 'zip'],
                                          region_type=['voronoi', 'zip'],
@@ -592,7 +626,7 @@ if __name__ == '__main__':
     # filter out bad combinations
     params = filter(lambda d: d['node_type'] != 'crime' or d['region_type'] != 'zip', params)
 
-    def work(city, distance, node_type, region_type, algorithm, filename, iterations):
+    def work(city, crime_name, distance, node_type, region_type, algorithm, filename, iterations):
         unique_id = '{}-{}-{}-{}-{}-{}-{}'.format(city,
                                                   distance,
                                                   node_type,
@@ -606,7 +640,7 @@ if __name__ == '__main__':
         logger.name = unique_id
         logger.info('Starting!')
 
-        path = 'data/{}/distance/{}/{}'.format(city, distance, node_type)
+        path = 'data/{}/{}/distance/{}/{}'.format(city, crime_name, distance, node_type)
         network = load_network(path, filename)
         add_regions(network, path, filename, region_type)
 
