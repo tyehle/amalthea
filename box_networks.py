@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 def get_bounds(city):
+    """ Finds a set of bounding coordinates using the shapes of the zip codes
+        for a city.
+
+        :param city: The name of a city in the cities.json file
+        :return: The bounds as a tuple of (left, bottom, right, top)
+
+        Examples
+        --------
+        >>> left, bottom, right, top = get_bounds('miami')
+    """
     zips = json.load(open('cities.json', 'r'))[city]
     geoms = _client.crimes.geometry
     shapes = [shape(s['geometry']) for s in geoms.find({'zip': {'$in': zips}})]
@@ -26,6 +36,33 @@ def get_bounds(city):
 
 
 def distance_crime_network_by_box(distance, city, box_size=20, limits=None, crime_limit=100000.0):
+    """ Builds a network for a city by merging many smaller networks.
+
+        The module level flag, `_multiprocess` determines if the construction
+        of the network will happen in different process or in serial on a
+        single process.
+
+        :param distance: The maximum distance between two connected crimes.
+        :param city: The name of the city to find crimes in. There should be an
+        entry in cities.json for the given name.
+        :param box_size: The approximate length of a side of the sub-networks
+        in miles. This will be rounded so there is an integer number of boxes
+        of the same size.
+        :param limits: Any additional limits to be passed to the crime_window
+        function. These may include dates or crime types, eg: {'type': 'Theft'}
+        :param crime_limit: An approximate limit on the number of crimes in the
+        network. Very large networks may make some systems run out of memory.
+        If that happens this value can be lowered. This limit is used to define
+        a chance of any crime being included in the network, thus the exact
+        number of crimes in the final network is not known until the network is
+        complete.
+        :return: A network of crimes for the given area and distance with
+        approximately the given number of nodes.
+
+        Examples
+        --------
+        >>> g = distance_crime_network_by_box(1.6, 'miami', limits={'type': 'Assault'})
+    """
     left, bottom, right, top = get_bounds(city)
     logger.info('distance={}, lon=({} to {}), lat=({} to {})'.format(distance,
                                                                      left,
@@ -225,8 +262,11 @@ def get_box_network(width, height, x, y, gl_bottom, gl_left, limits, distance, k
         limits. The network has the top, bottom, left, and right attributes
         set to the bounding coordinates of the box.
     """
-    # this will be run in parallel, so change the name of the logger
-    logger.name = '< {} : {} >'.format(x, y)
+    if _multiprocess:
+        # this will be run in parallel, so change the name of the logger
+        logger.name = '< {} : {} >'.format(x, y)
+    else:
+        logger.debug('< {} : {} >'.format(x, y))
 
     # find the bounds for this box
     bottom = gl_bottom + height*y
@@ -253,9 +293,18 @@ def get_box_network(width, height, x, y, gl_bottom, gl_left, limits, distance, k
 
 
 def make_row_network(network_row, distance, row_number):
+    """ Stitches a number of box networks into a row network.
+
+        :param network_row: A list of box networks ordered from left to right.
+        :param distance: The maximum distance between two linked nodes.
+        :param row_number: The row index. This is used to rename the logger for
+        more comprehensible output if run in parallel.
+        :return: A single network representing the whole row of box networks
+    """
     total = len(network_row)
     row = network_row.pop(0)
-    logger.name = '< {} >'.format(row_number)
+    if _multiprocess:
+        logger.name = '< {} >'.format(row_number)
 
     # find the maximum required overlap
     conv = math.pi/180.0
@@ -271,6 +320,21 @@ def make_row_network(network_row, distance, row_number):
 
 
 def stitch_networks(base, other, distance, overlap, overlap_axis, base_edge):
+    """ Stitches two networks together.
+
+        :param base: The base network. All nodes and edges from the other
+        network will be added to this one, and the nodes will be stitched with
+        any additional edges that may be required.
+        :param other: The network to add to the base network. This method does
+        not cause any side effects in this network.
+        :param distance: The maximum distance between two connected nodes.
+        :param overlap: The length of overlap between the two networks in which
+        nodes could be connected.
+        :param overlap_axis: The axis on which the stitch is taking place.
+        Should be one of either 'latitude' or 'longitude'.
+        :param base_edge: The edge
+        :return:
+    """
     logger.debug('Stitching {} at {}'.format(base_edge, base[base_edge]))
     stitch_edges = []
     for bi in range(base.vcount()):
@@ -279,10 +343,7 @@ def stitch_networks(base, other, distance, overlap, overlap_axis, base_edge):
         if base_v[overlap_axis] >= base[base_edge] - overlap:
             for i in range(other.vcount()):
                 if other.vs[i][overlap_axis] <= base[base_edge] + overlap:
-                    if network_creation.v_distance(base_v['latitude'],
-                                                   base_v['longitude'],
-                                                   other.vs[i]['latitude'],
-                                                   other.vs[i]['longitude']) <= distance:
+                    if network_creation.within_distance(base_v, other.vs[i], distance):
                         stitch_edges.append((bi, i+base.vcount()))
     # copy vertices from other into base
     offset = base.vcount()
