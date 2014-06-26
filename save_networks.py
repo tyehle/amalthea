@@ -263,8 +263,8 @@ def save_dynamic_distance_year_graph(years, area_name, distance, node_type, crim
 
 
 if __name__ == '__main__':
-    # logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
-    logging.basicConfig(level=logging.DEBUG)
+    logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
+    # logging.basicConfig(level=logging.DEBUG)
 
     todo = 'collapse'
 
