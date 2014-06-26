@@ -7,64 +7,99 @@ from math import ceil
 import logging.config
 import multithreading
 import box_networks
+import igraph
+import glob
 
 logger = logging.getLogger(__name__)
 
 
 def save_graph(g, file_path):
+    """ Saves a graph, creating the directory first if it does not exist.
+
+        :param g: The graph to save.
+        :param file_path: The path to write the graph to.
+
+        Examples
+        --------
+        >>> import igraph
+        >>> g = igraph.Graph.Full(7)
+        >>> path = 'data/testing/test.graphml'
+        >>> save_graph(g, path)
+        >>> os.path.exists(path)
+        True
+    """
     path = os.path.dirname(os.path.abspath(file_path))
     if not os.path.exists(path):
         os.makedirs(path)
     g.write_graphml(file_path)
 
 
-# def save_distance_zip_networks(cache=True):
-#     city_zips = json.load(open('cities.json', 'r'))
-#     cities = ['los_angeles', 'baltimore']
-#     distances = [.1, .8, 1.6, 2.4, 3.2]
-#
-#     # TODO: Make this parallel if the network creation cannot be made parallel
-#
-#     for city in cities:
-#         # grab the data we will use
-#         data = crime_window(zipcodes=city_zips[city],
-#                             start_date=datetime(2010, 12, 30),
-#                             end_date=datetime(2011, 1, 1))
-#         filename = '30dec2010'
-#         for d in distances:
-#             print('{} {}'.format(city, d))
-#             base_path = 'data/{}/distance/{}'.format(city, d)
-#             crime_path = '{}/crime/networks/{}.graphml'.format(base_path, filename)
-#             zip_path = '{}/zip/networks/{}.graphml'.format(base_path, filename)
-#             # if the graph already exists, do not make a new one
-#             if os.path.exists(zip_path):
-#                 continue
-#             if not os.path.exists(crime_path):
-#                 # no crime network found
-#                 if cache:
-#                     # if we want to cache the crime network, make one
-#                     g = network_creation.distance_crime_graph(data, d)
-#                     save_graph(g, crime_path)
-#                     # reduce and save the network
-#                     network_creation.reduce_to_zip_graph(g)
-#                     save_graph(g, zip_path)
-#                 else:
-#                     # do not cache (probably for memory reasons)
-#                     g = network_creation.distance_zip_graph(data, d)
-#                     save_graph(g, zip_path)
-#             else:
-#                 # the crime network already exists, so grab it
-#                 g = igraph.Graph.Read(crime_path)
-#                 # reduce the network
-#                 network_creation.reduce_to_zip_graph(g)
-#                 save_graph(g, zip_path)
+def collapse_all_to_zip():
+    """ Creates zip code networks out of all the crimes networks available.
+
+        Will not overwrite previously existing zip code networks.
+
+        Examples
+        --------
+        >>> collapse_all_to_zip()
+    """
+    networks = glob.glob('data/*/distance/*/crime/networks/*.graphml')
+    logger.info('{} networks found'.format(len(networks)))
+    parts = [name.split('/') for name in networks]
+    paths = [(os.path.join(*p[:4]), p[-1]) for p in parts]
+
+    for base_path, filename in paths:
+        logger.debug('{} : {}'.format(base_path, filename))
+        # base_path = 'data/{}/distance/{}'.format(city, d)
+        crime_path = '{}/crime/networks/{}'.format(base_path, filename)
+        zip_path = '{}/zip/networks/{}'.format(base_path, filename)
+        # if the graph already exists, do not make a new one
+        if os.path.exists(zip_path):
+            logger.debug('Network exists, skipping')
+            continue
+        elif os.path.exists(crime_path):
+            logger.info('Collapsing {}'.format(crime_path))
+            # the crime network already exists, so grab it
+            g = igraph.Graph.Read(crime_path)
+            # reduce the network
+            network_creation.reduce_to_zip_graph(g)
+            save_graph(g, zip_path)
+        else:
+            raise RuntimeError('Crime network not found {}'.format(crime_path))
 
 
 def date_string(d):
+    """ Gets a string representing a date, but not time.
+
+        This is used to generate readable dates for use in file names.
+
+        :param d: A datetime object
+        :return: A string representing the date
+
+        Examples
+        --------
+        >>> from datetime import datetime
+        >>> date_string(datetime(2010, 12, 14, 5, 31, 02))
+        '2010-12-14'
+    """
     return d.strftime('%Y-%m-%d')
 
 
 def get_crime_name(crime_types):
+    """ Converts a list of crime types into a readable file name.
+
+        `None` is converted to 'all'
+
+        :param crime_types: The list of crime types. Each type is a string.
+        :return: A single string representing the list of types.
+
+        Examples
+        --------
+        >>> get_crime_name(None)
+        'all'
+        >>> get_crime_name(['Theft', 'Burglary'])
+        'theft-burglary'
+    """
     if crime_types is None:
         return 'all'
     else:
@@ -109,7 +144,7 @@ def save_dynamic_distance_delta_graph(initial, final, delta_name, area_name,
         >>> initial = datetime(2010, 1, 1)
         >>> final = datetime(2010, 1, 8)
         >>> delta = timedelta(days=1)
-        >>> save_dynamic_distance_graph(initial, final, delta, 'baltimore', 1.6, 'zip')
+        >>> save_dynamic_distance_delta_graph(initial, final, delta, 'baltimore', 1.6, 'zip')
     """
     path = 'data/{}/{}/distance/{}/{}'.format(area_name, get_crime_name(crime_types),
                                               distance, node_type)
@@ -130,42 +165,77 @@ def save_dynamic_distance_delta_graph(initial, final, delta_name, area_name,
     for c in range(increment):
         logger.info('Creating graph {} of {}'.format(c, increment))
         cur_t = t + delta
-        # Filter relevant crimes
-        c_relevant = []
-        for crime in w:
-            d = str2date(crime['date'])
-            if t <= d < cur_t:
-                c_relevant.append(crime)
-        g = network_creation.distance_graph(c_relevant, distance, node_type)
-        # g.vs['y'] = [-x for x in g.vs['latitude']]
-        # g.vs['x'] = [x for x in g.vs['longitude']]
-        # Size node proportional to node betweenness
-        # m = max([g.betweenness(i) for i in g.vs])
-        # g.vs['size'] = [((g.betweenness(i)/m) * 12) + 5 for i in g.vs]
-        save_graph(g, '{}/networks/{}_{}.graphml'.format(path, delta_name, date_string(t)))
-        #igraph.plot(g)
+        # Filter crimes in this window
+        c_relevant = filter(lambda crime: t <= str2date(crime['date']) < cur_t, w)
+        network_path = '{}/networks/{}_{}.graphml'.format(path, delta_name, date_string(t))
+        if not os.path.exists(network_path):
+            g = network_creation.distance_graph(c_relevant, distance, node_type)
+            save_graph(g, network_path)
+        else:
+            logger.debug('Network exists, skipping')
         t = cur_t
 
 
 def save_dynamic_distance_month_graph(years, area_name, distance, node_type, crime_types=None):
+    """ Saves a number of networks, where each network represents a month.
+
+        Each network is saved to disk at a location that matches the parameters
+        used to construct it.
+
+        :param years: The time frame of networks to create. Should be a list of
+        integers.
+        :param area_name: The name of the area to search for crimes. This
+        should be a valid entry in cities.json
+        :param distance: The maximum distance between two connected crimes.
+        :param node_type: What each node represents. The is passed on to
+        network_creation.distance_graph.
+        :param crime_types: The types of crimes to include in the network.
+
+        Examples
+        --------
+        >>> save_dynamic_distance_month_graph([2008, 2009], 'miami', 1.6, 'crime', ['Theft'])
+    """
     start_times = map(lambda args: datetime.datetime(**args),
                       multithreading.combinations(month=range(1, 13), year=years, day=[1]))
     # add the end point of the final network to the list
     start_times.append(datetime.datetime(year=years[-1] + 1, month=1, day=1))
 
-
     path = 'data/{}/{}/distance/{}/{}'.format(area_name, get_crime_name(crime_types), distance, node_type)
     zipcodes = json.load(open('cities.json', 'r'))[area_name]
     i = 0
     while i < len(start_times) - 1:
-        data = crime_window(start_times[i], start_times[i+1], zipcodes, crime_types)
-        logger.debug('{} crimes found for {}'.format(len(data), start_times[i]))
-        g = network_creation.distance_graph(data, distance, node_type)
-        save_graph(g, '{}/networks/{}_{}.graphml'.format(path, 'month', date_string(start_times[i])))
+        network_path = '{}/networks/{}_{}.graphml'.format(path, 'month', date_string(start_times[i]))
+        if not os.path.exists(network_path):
+            data = crime_window(start_times[i], start_times[i+1], zipcodes, crime_types)
+            logger.info('{} crimes found for {}'.format(len(data), start_times[i]))
+            g = network_creation.distance_graph(data, distance, node_type)
+            save_graph(g, network_path)
+        else:
+            logger.info('Network exists, skipping')
         i += 1
 
 
 def save_dynamic_distance_year_graph(years, area_name, distance, node_type, crime_types=None):
+    """ Saves a number of networks, where each network represents a year.
+
+        Each network is saved to disk at a location that matches the parameters
+        used to construct it. This method uses the box network method to make
+        network creation faster. This means each network may not contain all
+        the crimes available for that period of time.
+
+        :param years: The time frame of networks to create. Should be a list of
+        integers.
+        :param area_name: The name of the area to search for crimes. This
+        should be a valid entry in cities.json
+        :param distance: The maximum distance between two connected crimes.
+        :param node_type: What each node represents. The is passed on to
+        network_creation.distance_graph.
+        :param crime_types: The types of crimes to include in the network.
+
+        Examples
+        --------
+        >>> save_dynamic_distance_year_graph([2008, 2009], 'miami', 1.6, 'crime', ['Theft'])
+    """
     start_times = map(lambda args: datetime.datetime(**args),
                       multithreading.combinations(month=[1], year=years, day=[1]))
     # add the end point of the final network to the list
@@ -181,23 +251,27 @@ def save_dynamic_distance_year_graph(years, area_name, distance, node_type, crim
 
     i = 0
     while i < len(start_times) - 1:
-        limits['date'] = {'$gte': start_times[i], '$lt': start_times[i+1]}
-        g = box_networks.distance_crime_network_by_box(distance, area_name, limits=limits)
-        save_graph(g, '{}/networks/{}_{}.graphml'.format(path, 'year', date_string(start_times[i])))
+        network_path = '{}/networks/{}_{}.graphml'.format(path, 'year', date_string(start_times[i]))
+        if not os.path.exists(network_path):
+            limits['date'] = {'$gte': start_times[i], '$lt': start_times[i+1]}
+            logger.info('Building {}'.format(limits))
+            g = box_networks.distance_crime_network_by_box(distance, area_name, limits=limits)
+            save_graph(g, network_path)
+        else:
+            logger.info('Network exists, skipping')
         i += 1
 
 
 if __name__ == '__main__':
-    """ Create dynamic graphs for all of 2010 by days and weeks for baltimore
-        and los angeles for multiple distance networks."""
-    logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
+    # logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
+    logging.basicConfig(level=logging.DEBUG)
 
-    todo = 'month'
+    todo = 'collapse'
 
     areas = ['baltimore', 'los_angeles', 'miami']
     distances = [0.1, 0.8, 1.6, 2.4, 3.2]
     node_types = ['crime']
-    crime_types = [None, ['Theft'], ['Burglary'], ['Assault']]
+    _crime_types = [None, ['Theft'], ['Burglary'], ['Assault']]
 
     logger.info('Starting')
     if todo == 'month':
@@ -205,7 +279,7 @@ if __name__ == '__main__':
                                              area_name=areas,
                                              distance=distances,
                                              node_type=node_types,
-                                             crime_types=crime_types)
+                                             crime_types=_crime_types)
         multithreading.map_kwargs(save_dynamic_distance_month_graph, params)
     elif todo == 'week':
         params = multithreading.combinations(initial=[datetime.datetime(2007, 1, 1)],
@@ -214,7 +288,7 @@ if __name__ == '__main__':
                                              area_name=areas,
                                              distance=distances,
                                              node_type=node_types,
-                                             crime_types=crime_types)
+                                             crime_types=_crime_types)
         logger.info('Generating {} dynamic networks'.format(len(params)))
         multithreading.map_kwargs(save_dynamic_distance_delta_graph, params)
         # map(lambda args: save_dynamic_distance_graph(**args), params)
@@ -223,6 +297,8 @@ if __name__ == '__main__':
                                              area_name=areas,
                                              distance=distances,
                                              node_type=node_types,
-                                             crime_types=crime_types)
+                                             crime_types=_crime_types)
         multithreading.map_kwargs(save_dynamic_distance_year_graph, params)
+    elif todo == 'collapse':
+        collapse_all_to_zip()
     logger.info('Done!')
