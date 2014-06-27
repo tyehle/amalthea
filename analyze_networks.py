@@ -3,7 +3,6 @@ __author__ = 'Tobin Yehle'
 import json
 import logging.config
 from community_detection import get_communities
-import os
 import natsort
 import glob
 import igraph
@@ -53,20 +52,27 @@ def get_dynamic_modularity(path, filename, algorithm):
     file_list = natsort.natsorted(glob.glob('{}/networks/{}*.graphml'.format(path, filename)))
     for f in file_list:
         # if filename in f:
-        g = igraph.Graph.Read_GraphML('{}/networks/{}'.format(path, f))
-        clust = get_communities(g, 1, path, f, algorithm=algorithm)
-        mod_list.append(g.modularity(clust[0], weights = 'weight'))
+        g = igraph.Graph.Read_GraphML(f)
+        #'{}/networks/{}'.format(path, f)
+        clust = get_communities(g, 1, path, filename, algorithm=algorithm)
+        try:
+            #mod_list.append(g.modularity(clust[0], weights = [int(w) if w >0 else 0 for w in g.es['weight']]))
+            mod_list.append(str(type(clust[0])))
+        except TypeError:
+            mod_list.append(0.0)
+            print 'IndexError with graph of {} nodes'.format(g.vcount())
     return mod_list
 
 
-def get_dynamic_node_betweenness(path, filename, node_zipcode, measure):
+def get_dynamic_node_centrality(path, filename, node_zipcode, measure):
     c_list= []
     # file_list = os.listdir('{}/networks'.format(path))
     # os.chdir('{}/networks'.format(path))
     file_list = natsort.natsorted(glob.glob('{}/networks/{}*.graphml'.format(path, filename)))
     for f in file_list:
         # if filename in f:
-        g = igraph.Graph.Read_GraphML('{}/networks/{}'.format(path, f))
+        g = igraph.Graph.Read_GraphML(f)
+        # '{}/networks/{}'.format(path, f)
         try:
             c_list.append(_centrality[measure](g, node_zipcode))
         except IndexError:
@@ -78,11 +84,18 @@ if __name__ == '__main__':
     logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
     logging.basicConfig(level=logging.DEBUG)
 
-    cities = json.load(open('cities.json'), 'r')
-    areas = ['baltimore', 'los_angeles', 'miami']
-    crime_types = [None, ['Theft'], ['Burglary'], ['Assault']]
-    distances = [0.1, 0.8, 1.6, 2.4, 3.2]
-    delta_name = ['week', 'month', 'year']
+    # cities = json.load(open('cities.json'), 'r')
+    # areas = ['baltimore', 'los_angeles', 'miami']
+    # crime_types = [None, ['Theft'], ['Burglary'], ['Assault']]
+    # distances = [0.1, 0.8, 1.6, 2.4, 3.2]
+    # delta_name = ['week', 'month', 'year']
+
+    cities = json.load(open('cities.json', 'r'))
+    areas = ['miami']
+    crime_types = [['all']]
+    distances = [1.6]
+    delta_name = ['month']
+
 
     # Iterate through variables of interest
     for delta in delta_name:
@@ -90,20 +103,20 @@ if __name__ == '__main__':
             for crime in crime_types:
                 for area in areas:
 
-                    path = 'data/{}/{}/distance/{}/zip/'.format(area, get_crime_name(crime), dist)
+                    path = 'data/{}/{}/distance/{}/zip'.format(area, get_crime_name(crime), dist)
 
-                    # Generate modularity measures for dynamic graphs sequence 
-                    modularity = dict()
-                    for a in ['multilevel', 'label_propagation', 'random_walk', 'fast_greedy']:
-                        modularity[a] = get_dynamic_modularity(path, '{}_{}'.format(delta, '2010'), a)
-                    # Save modularity dictionary as json in path/communities
-                    json.dump(modularity, open('{}/communities/modularity_{}_2010.json'.format(path, delta)), 'w')
+                    # # Generate modularity measures for dynamic graphs sequence 
+                    # modu = dict()
+                    # for a in ['multilevel', 'label_propagation', 'fast_greedy']:
+                    #     modu[a] = get_dynamic_modularity(path, '{}_{}'.format(delta, '2010'), a)
+                    # # Save modu dictionary as json in path/communities
+                    # json.dump(modu, open('{}/communities/{}/modularity_{}_2010.json'.format(path, a, delta), 'w'))
 
                     # Generate centrality measures for dynamic graphs sequence
                     for b in ['betweenness', 'eigenvector', 'closeness', 'degree']:
                         centrality = dict()
                         for z in cities[area]:
-                            centrality[z] = get_dynamic_node_betweenness(path, '{}_{}'.format(str(delta.days), '2010'), z, b)
+                            centrality[z] = get_dynamic_node_centrality(path, '{}_{}'.format(delta, '2010'), z, b)
                         # Save centrality for measure b as json in path/centrality
-                        json.dump(centrality, open('{}/centrality/{}_{}_2010.json'.format(path, b, delta)), 'w')
+                        json.dump(centrality, open('{}/centrality/{}_{}_2010.json'.format(path, b, delta), 'w'))
 
