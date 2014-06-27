@@ -13,6 +13,8 @@ import multithreading
 import logging.config
 import network_creation
 import plotting
+import math
+import random
 
 _client = pymongo.MongoClient('163.118.78.22', 27017)
 _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
@@ -20,11 +22,6 @@ _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').a
                'label_propagation': lambda g: g.community_label_propagation(weights='weight'),
                'fast_greedy': lambda g: g.community_fastgreedy(weights='weight').as_clustering(),
                'multilevel': lambda g: g.community_multilevel(weights='weight')}
-_centrality = {'betweenness': lambda g, node_zipcode: g.betweenness(g.vs.select(zipcode_eq=node_zipcode)[0]),
-               'eigenvector': lambda g, node_zipcode: g.eigenvector_centrality(directed=False)
-               [g.vs.select(zipcode_eq=node_zipcode)[0].index],
-               'closeness': lambda g, node_zipcode: g.closeness(g.vs.select(zipcode_eq=node_zipcode)[0]),
-               'degree': lambda g, node_zipcode: g.degree(g.vs.select(zipcode_eq=node_zipcode)[0])}
 
 logger = logging.getLogger(__name__)
 
@@ -132,15 +129,21 @@ def add_regions(g, path, filename, region_type):
         # save cells for future use
         ensure_folder(cells_file)
         schema = {'geometry': 'Polygon',
-                  'properties': {'index': 'int'}}
+                  'properties': {'index': 'int',
+                                 'count': 'int'}}
         h = open(cells_file[:-4]+'.dbf', 'a')
         try:
             multithreading.lock_file_handle(h)
             with fiona.open(cells_file, 'w', 'ESRI Shapefile', schema) as c:
                 for i in range(g.vcount()):
                     writable = shapely.geometry.mapping(shapely.geometry.shape(g.vs[i]['cell']))
+                    if region_type == 'zip':
+                        count = g.vs[i]['description']
+                    else:
+                        count = 1
                     c.write({'geometry': writable,
-                             'properties': {'index': i}})
+                             'properties': {'index': i,
+                                            'count': count}})
         finally:
             multithreading.unlock_file_handle(h)
             h.close()
@@ -529,8 +532,6 @@ def get_border_network(path, filename, region_type, algorithm, iterations):
         # change the weights on the edges to reflect the border weight
         for e in border_network.es:
             e['weight'] = find_border_weight(comms, e.source, e.target)
-        # remove 0 weight edges
-        border_network.delete_edges(lambda edge: edge['weight'] == 0)
         # scale edges based on number of iterations
         border_network.es['weight'] = [float(w) / iterations for w in border_network.es['weight']]
 
@@ -609,22 +610,129 @@ def save_borders(path, filename, region_type, iterations, algorithm):
         h.close()
 
 
+def randomized_borders(b, iterations=-1, choose_prob=0.5):
+    """ Randomizes the borders in a border network.
+
+        This changes the given network into a random border network.
+
+        :param b: The border network to randomize.
+        :param iterations: The number of iterations to run the randomization
+        process. If this is -1 (the default) then the process will run for the
+        number of edges in the network.
+        :param choose_prob: The probability of choosing a border to subtract
+        weight from.
+
+        Examples
+        --------
+        >>> import igraph
+        >>> r = igraph.Graph.Read('borders.graphml')
+        >>> b = igraph.Graph.Read('borders.graphml')
+        >>> randomized_borders(r)
+        >>> cc = get_absolute_cross_correlation(b, r)
+    """
+    if iterations == -1:
+        iterations = b.ecount()
+
+    for i in range(iterations):
+        # choose a random vertex
+        v = b.vs[random.randint(1, b.vcount()) - 1]
+
+        # randomly split the incident edges into two groups
+        add = sub = []
+        for e in b.es:
+            if v['zipcode'] != b.vs[e.source]['zipcode'] and \
+               v['zipcode'] != b.vs[e.target]['zipcode']:
+                # this edge does not interest us
+                continue
+            if random.random() < choose_prob:
+                sub.append(e)
+            else:
+                add.append(e)
+
+        to_remove = [random.random() * e['weight'] for e in sub]
+        to_add = sum(to_remove) / len(add)
+
+        # redistribute weight
+        for e, amount in zip(sub, to_remove):
+            e['weight'] -= amount
+        for e in add:
+            e['weight'] += to_add
+
+
+def get_absolute_cross_correlation(a, b):
+    """ Finds the absolute cross correlation between two networks with the same
+        structure.
+
+        The two given networks must have nodes with a zipcode attribute. The
+        zip codes of the source and targets of all edges in a must match those
+        in b.
+
+        :return: The absolute cross correlation between a and b.
+
+        Examples
+        --------
+        >>> import igraph
+        >>> a = igraph.Graph.Read('crimes.graphml')
+        >>> b = igraph.Graph.Read('census.graphml')
+        >>> cc = get_absolute_cross_correlation(a, b)
+    """
+    # each node must have a zipcode attribute
+    # the two networks must have the same structure
+    if a.vcount() != b.vcount():
+        raise AssertionError('a and b do not have the same number of edges!')
+    prod = aprod = bprod = 0.0
+    # find a sortable list of edges for both networks ((zip, zip), w)
+    get_sortable_edge = lambda g, e: (tuple(sorted([g.vs[e.source]['zipcode'],
+                                                    g.vs[e.target]['zipcode']])),
+                                      e['weight'])
+
+    a_es = [get_sortable_edge(a, ae) for ae in a.es]
+    b_es = [get_sortable_edge(b, be) for be in b.es]
+    a_es.sort()
+    b_es.sort()
+    for i in range(len(a_es)):
+        if a_es[i][0] != b_es[i][0]:
+            raise AssertionError('Edges do not match!')
+        prod += a_es[i][1] * b_es[i][1]
+        aprod += a_es[i][1]**2
+        bprod += b_es[i][1]**2
+    return prod / math.sqrt(aprod * bprod)
+
+
 if __name__ == '__main__':
     # write info and debug to different files
     logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
     fiona.log.setLevel(logging.WARNING)  # I don't care about the fiona logs
 
-    params = multithreading.combinations(city=['los_angeles', 'baltimore'],
+    month_files = map(lambda args: 'month_{year}-{month:0>2}-{day:0>2}'.format(**args),
+                      multithreading.combinations(year=range(2007, 2011),
+                                                  month=range(1, 13),
+                                                  day=[1]))
+    year_files = map(lambda args: 'year_{year}-{month:0>2}-{day:0>2}'.format(**args),
+                     multithreading.combinations(year=range(2007, 2011),
+                                                 month=[1], day=[1]))
+
+    # params = multithreading.combinations(city=['los_angeles', 'baltimore', 'miami'],
+    #                                      crime_name=['all', 'theft', 'burglary', 'assault'],
+    #                                      distance=[3.2, 2.4, 1.6, .8, .1],
+    #                                      node_type=['crime', 'zip'],
+    #                                      region_type=['voronoi', 'zip'],
+    #                                      algorithm=['random_walk', 'label_propagation'],
+    #                                      filename=['dec2010', '17dec2010', '30dec2010'],
+    #                                      iterations=[30])
+
+    params = multithreading.combinations(city=['miami'],
                                          crime_name=['all'],
-                                         distance=[3.2, 2.4, 1.6, .8, .1],
+                                         distance=[1.6],
                                          node_type=['crime', 'zip'],
                                          region_type=['voronoi', 'zip'],
-                                         algorithm=['random_walk', 'label_propagation'],
-                                         filename=['dec2010', '17dec2010', '30dec2010'],
-                                         iterations=[30])
+                                         algorithm=['label_propagation'],
+                                         filename=month_files,
+                                         iterations=[1])
 
     # filter out bad combinations
-    params = filter(lambda d: d['node_type'] != 'crime' or d['region_type'] != 'zip', params)
+    params = filter(lambda d: d['node_type'] == 'crime' and d['region_type'] == 'voronoi' or
+                              d['node_type'] == 'zip' and d['region_type'] == 'zip', params)
 
     def work(city, crime_name, distance, node_type, region_type, algorithm, filename, iterations):
         unique_id = '{}-{}-{}-{}-{}-{}-{}'.format(city,
@@ -642,18 +750,18 @@ if __name__ == '__main__':
 
         path = 'data/{}/{}/distance/{}/{}'.format(city, crime_name, distance, node_type)
         network = load_network(path, filename)
-        add_regions(network, path, filename, region_type)
+        # add_regions(network, path, filename, region_type)
 
         _ = get_communities(network, iterations, path, filename, algorithm=algorithm)
 
-        save_borders(path, filename, region_type, iterations, algorithm)
-
-        figure_path = 'output/{}.svg'.format(unique_id)
-        if not os.path.exists(figure_path):
-            fig = plotting.get_border_fig(path, region_type, algorithm, filename, iterations)
-            fig.savefig(figure_path)
-        else:
-            logger.info('Figure Exists, skipping')
+        # save_borders(path, filename, region_type, iterations, algorithm)
+        #
+        # figure_path = 'output/{}.svg'.format(unique_id)
+        # if not os.path.exists(figure_path):
+        #     fig = plotting.get_border_fig(path, region_type, algorithm, filename, iterations)
+        #     fig.savefig(figure_path)
+        # else:
+        #     logger.info('Figure Exists, skipping')
 
         logger.info('Done!')
         return True
