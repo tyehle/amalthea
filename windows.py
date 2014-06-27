@@ -61,9 +61,9 @@ def crime_window(start_date=None,
 
     if end_date is not None:
         if 'date' in limits:
-            limits['date']['$lte'] = end_date
+            limits['date']['$lt'] = end_date
         else:
-            limits['date'] = {'$lte': end_date}
+            limits['date'] = {'$lt': end_date}
 
     if zipcodes is not None:
         limits['zipcode'] = {'$in': zipcodes}
