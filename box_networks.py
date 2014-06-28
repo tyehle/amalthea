@@ -11,11 +11,15 @@ import json
 from shapely.geometry import shape
 from shapely.ops import cascaded_union
 
-_client = pymongo.MongoClient('163.118.78.22', 27017)
 _earth_rad = 3956.5467  # miles
 _multiprocess = False
 
 logger = logging.getLogger(__name__)
+
+
+def get_client():
+    """ Gets a new instance of the pymongo client object. """
+    return pymongo.MongoClient('163.118.78.22', 27017)
 
 
 def get_bounds(city):
@@ -30,7 +34,7 @@ def get_bounds(city):
         >>> left, bottom, right, top = get_bounds('miami')
     """
     zips = json.load(open('cities.json', 'r'))[city]
-    geoms = _client.crimes.geometry
+    geoms = get_client().crimes.geometry
     shapes = [shape(s['geometry']) for s in geoms.find({'zip': {'$in': zips}})]
     return cascaded_union(shapes).bounds
 
@@ -70,7 +74,7 @@ def distance_crime_network_by_box(distance, city, box_size=20, limits=None, crim
                                                                      bottom,
                                                                      top))
 
-    cs = _client['crimes'].crimes
+    cs = get_client().crimes.crimes
     bounds = {'$within': {'$box': [[left, bottom], [right, top]]}}
     if limits is not None:
         count = cs.find(dict(limits, coordinates=bounds)).count()
@@ -107,8 +111,8 @@ def distance_crime_network_by_box(distance, city, box_size=20, limits=None, crim
 
     rows = stitch_boxes(boxes, distance)
 
-    logger.debug('{} total crimes'.format(reduce(lambda s, n: s+n.vcount(), rows, 0)))
-    logger.debug('{} total edges'.format(reduce(lambda s, n: s+n.ecount(), rows, 0)))
+    logger.info('{} total crimes'.format(reduce(lambda s, n: s+n.vcount(), rows, 0)))
+    logger.info('{} total edges'.format(reduce(lambda s, n: s+n.ecount(), rows, 0)))
 
     return stitch_rows(rows, distance, row_overlap)
 
@@ -127,8 +131,8 @@ def stitch_boxes(networks, distance):
     max_x = max([k[0] for k in networks.keys()])
     max_y = max([k[1] for k in networks.keys()])
     params = []
-    for y in range(max_y):
-        params.append({'network_row': [networks[(x, y)] for x in range(max_x)],
+    for y in range(max_y + 1):
+        params.append({'network_row': [networks[(x, y)] for x in range(max_x + 1)],
                        'distance': distance,
                        'row_number': y})
 
@@ -274,7 +278,7 @@ def get_box_network(width, height, x, y, gl_bottom, gl_left, limits, distance, k
     left = gl_left + width*x
     right = gl_left + width*(x+1)
 
-    crimes = _client['crimes'].crimes
+    crimes = get_client().crimes.crimes
     if limits is None:
         limits = {'coordinates': {'$within': {'$box': [[left, bottom], [right, top]]}}}
     else:
