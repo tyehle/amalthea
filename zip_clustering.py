@@ -3,35 +3,37 @@ import csv
 import json
 import numpy as np
 from pymongo import MongoClient
-from scipy.spatial.distance import pdist
+from scipy.spatial.distance import pdist, squareform 
 from scipy.cluster import hierarchy
+import fiona
+from shapely.geometry import mapping, asShape
+import igraph
+import plotting
 
 _client = MongoClient('163.118.78.22', 27017)
 _db = _client['crimes_test']
 _geometry = _db.geometry
 
-
-def retrieve_census(city, 
-                    file_names = ['ACS_12_5YR_DP02_with_ann.csv', 
-                                 'ACS_12_5YR_DP03_with_ann.csv', 
-                                 'ACS_12_5YR_DP04_with_ann.csv'], 
+def retrieve_census(area_name, 
+                    file_names = ['aff_download/ACS_12_5YR_DP02_with_ann.csv', 
+                                 'aff_download/ACS_12_5YR_DP03_with_ann.csv', 
+                                 'aff_download/ACS_12_5YR_DP04_with_ann.csv'], 
                     cols = [[33, 237, 241, 321], 
                            [37, 247, 297, 289, 513], 
-                           [13, 185]], 
-                    features = dict(), 
-                    var_names = []):
+                           [13, 185]]):
     """ Reads census data from files for variables of interest. Outputs a dictionary of features by zip code and a dictionary of variables.
     """
-    dir = os.path.abspath('data/{}/census/features.json'.format(city))
-    if os.path.exists(dir):
-        features = json.load(open('data/baltimore/census/features.json', 'r'))
-        var_names = json.load(open('data/baltimore/census/var_names.json', 'r'))
+    features = dict()
+    var_names = []
+    f = 'data/{}/census/features.json'.format(area_name)
+    if os.path.exists(f):
+        features = json.load(open('data/{}/census/features.json'.format(area_name), 'r'))
+        var_names = json.load(open('data/{}/census/var_names.json'.format(area_name), 'r'))
     else:
         c = json.load(open('cities.json'))
-        z_list = c[city]
+        z_list = c[area_name]
         if len(var_names) == 0:
             count = 0
-            os.chdir('/home/swhite/amalthea/aff_download')
             with open(file_names[0]) as data:
                 traverse = csv.reader(data)
                 for row in traverse:
@@ -59,14 +61,18 @@ def retrieve_census(city,
                                 except ValueError:
                                     features[row[1]].append(float(0.0001))
         var_names = dict(zip(range(len(var_names)), var_names))
-        json.dump(features, open('/home/swhite/amalthea/data/{}/census/features.json'.format(city), 'w'))
-        json.dump(var_names, open('/home/swhite/amalthea/data/{}/census/var_names.json'.format(city), 'w'))
+        json.dump(features, open('data/{}/census/features.json'.format(area_name), 'w'))
+        json.dump(var_names, open('data/{}/census/var_names.json'.format(area_name), 'w'))
     return (features, var_names)
 
 
-def cluster_zips(features, linkage, t):
+def cluster_zips(area_features, linkage, t, return_dist = False):
     """ Clusters zip codes using a hierachial method with euclidean distance and the inputted feature vector.
     """
+    if type(area_features) == str:
+        features = json.load(open('data/{}/census/features.json'.format(area_features), 'r'))
+    elif type(area_features) == dict:
+        features = area_features
     feat = []
     for i in features.values():
         feat.append(i)
@@ -77,58 +83,104 @@ def cluster_zips(features, linkage, t):
         Z = hierarchy.average(y)
     elif linkage == 'complete':
         Z = hierarchy.complete(y)
-    return hierarchy.fcluster(Z, criterion = 'distance', t = t)
+    f = hierarchy.fcluster(Z, criterion = 'distance', t = t)
+    if return_dist == True:
+        return (squareform(y), f)
+    else:
+        return f
     
 
+def census_cluster_graph(area_name, linkage, t):
+    # Open the feature and variables names dictionaries for the respective area
+    features = json.load(open('data/{}/census/features.json'.format(area_name), 'r'))
+    # var_names = json.load(open('data/{}/census/var_names.json'.format(area_name), 'r'))
+    # Cluster the zip codes according the specified linkage and threshold
+    y, Z = cluster_zips(features, linkage, t, return_dist=True)
+    # Create dictionary of average statistics per cluster
+    # zd = dict(zip([int(cluster) for cluster in set(Z)],[dict() for dictionary in range(len(set(Z)))]))
+    # for k in zd.keys():
+    #     for v in var_names.values():
+    #         zd[k][v] = 0
+    # Create a graph of the zip codes 
+    g = igraph.Graph(len(features.keys()))
+    g.vs['zipcode'] = features.keys()
+
+    # Traverse the zip code nodes assigning edges to nodes with borders
+    zip_list = []
+    for node in g.vs: 
+        # Load zip code's shape file
+        geom = asShape(_geometry.find_one({'zip': node['zipcode']})['geometry'])
+        zip_list.append(geom)
+        # Add relevant attributes to node
+        try:
+            node['longitude'] = sum([geom.bounds[i]  for i in range(len(geom.bounds)) if i % 2 == 0]) * 0.5
+            node['latitude'] = sum([geom.bounds[i]  for i in range(len(geom.bounds)) if i % 2 != 0]) * 0.5
+            node['cluster'] = int(Z[node.index])
+        except TypeError:
+            print geom.bounds, type(geom.bounds)
+        # Contribute zip code's statistics to cluster in dictionary
+        # for i, k in enumerate(var_names.keys()):
+        #         zd[int(Z[node.index])][var_names[str(i)]] += features[node['zipcode']][i]
+        # Investigate relationships between current node and previously investigated nodes
+        for i in range(node.index):
+            # Add edge if zip codes are adjacent and are in different borders
+            if zip_list[i].intersection(zip_list[node.index]).length > 0:
+                if Z[i] != Z[node.index]:
+                        # Quanitfy edge weight
+                        c1 = [c for c in range(len(Z)) if Z[c] == Z[i]]
+                        c2 = [c for c in range(len(Z)) if Z[c] == Z[node.index]]
+                        m = 0
+                        # Find complete distance between clusters
+                        for blah in c1:
+                            for blah2 in c2:
+                                if y[blah][blah2] > m:
+                                    m = y[blah][blah2]
+                        # Add edge to graph with weight indicative of cluster distance
+                        g.add_edge(i, node.index, weight = float(m))
+                else:
+                    g.add_edge(i, node.index, weight = 0.0)
+    if len(g.es) > 0:
+        # Normalize edge weights against maximum cluster distance
+        n = 0.0
+        for abc in range(len(Z)):
+            for xyz in range(len(Z)):
+                if y[abc][xyz] > n:
+                    n = y[abc][xyz]
+        n = float(n)
+        if n > 0.0:
+            g.es['weight'] = [i/n for i in g.es['weight']]
+    g.write_graphml('data/{}/census/hierarchical/{}/{}_{}.graphml'.format(area_name, linkage, linkage, t))
+    # for k in zd.keys():
+    #     l = len([1 for c in Z if c == k])
+    #     for stat in range(len(zd[k].values())):
+    #         zd[k][zd[k].keys()[stat]] /= l 
+    # json.dump(zd, open('data/{}/census/hierarchical/{}/{}_{}.json'.format(area_name, linkage, linkage, t), 'w'))
 
 
-
-if __name__ == '__main__':
-    import plotting
-    import fiona
-    from shapely.geometry import mapping, asShape
-
-    os.chdir('/home/swhite/amalthea')
-    cities = ['baltimore', 'los_angeles']
-    results = []
-    for i in cities:
-        results.append(retrieve_census(i))
+def census_cluster_plot(area_name, linkage, t):
+    features = json.load(open('data/{}/census/features.json'.format(area_name), 'r'))
     schema = {'geometry': 'MultiPolygon',
-              'properties': {'zip': 'str', 
-                            'L1': 'int',
-                            'L2': 'int',
-                            'L3': 'int',
-                            'L4': 'int',
-                            'L5': 'int',
-                            'L6': 'int'} }
-    for ind, city in enumerate(results):
-
-        trials = [('single', 20000), ('complete', 200000), ('average', 100000)]
-        levels = []
-
-        for s in trials:
-            os.chdir('/home/swhite/amalthea/data/{}/census/'.format(cities[ind]))
-            
-            for i in range(6): 
-                levels.append(cluster_zips(city[0], s[0], (s[1] * .7**(i+1))))
-                if len(levels) == 6:
-                    # Save clusters as shapefiles
-                    with fiona.open('{}.shp'.format(s[0]), 'w', 'ESRI Shapefile', schema) as c:
-                        for i, zipc in enumerate(city[0].keys()):
+              'properties': {'zip': 'str',
+                            str(t): 'int'} }
+    Z = cluster_zips(features, linkage, t)
+    with fiona.open('data/{}/census/hierarchical/{}/{}_{}.shp'.format(area_name, linkage, linkage, t), 'w', 'ESRI Shapefile', schema) as c:
+                        for i, zipc in enumerate(features.keys()):
                             poly = _geometry.find_one({'zip': zipc})['geometry']
                             c.write({
                                 'geometry': mapping(asShape(poly)),
                                 'properties': {'zip': zipc, 
-                                              'L1': int(levels[0][i]),
-                                              'L2': int(levels[1][i]),
-                                              'L3': int(levels[2][i]),
-                                              'L4': int(levels[3][i]),
-                                              'L5': int(levels[4][i]),
-                                              'L6': int(levels[5][i])} })
-                    levs = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']
-                    for l in levs:
-                        plotting.get_census_fig(cities[ind], s[0], l)
-                    levels = []
+                                              str(t): int(Z[i])}
+                                               })
+    # plotting.get_census_fig(area_name, linkage, t)
 
 
+if __name__ == '__main__':
+    test_iterations = 6
+    cities = ['baltimore', 'los_angeles', 'miami']
+    trials = [('single', 200000), ('complete', 200000), ('average', 200000)]
+    for area in cities:
+        for s in trials:
+            for i in range(6):
+                census_cluster_graph(area, s[0], int(s[1] * .5**i))
+                # census_cluster_plot(area, s[0], int(s[1] * .5**i))
 
