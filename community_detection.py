@@ -15,6 +15,9 @@ import network_creation
 import plotting
 import math
 import random
+import datetime
+import itertools
+import save_networks
 
 _client = pymongo.MongoClient('163.118.78.22', 27017)
 _algorithms = {'random_walk': lambda g: g.community_walktrap(weights='weight').as_clustering(),
@@ -518,6 +521,7 @@ def get_border_network(path, filename, region_type, algorithm, iterations):
 
         add_regions(g, path, filename, region_type)
 
+        # build the border network from the adjacency network
         border_network = get_adjacency_network(g, path, filename, region_type)
         add_regions(border_network, path, filename, region_type)
 
@@ -545,6 +549,37 @@ def get_border_network(path, filename, region_type, algorithm, iterations):
             h.close()
 
         return border_network
+
+
+def crime_to_zip_borders(crime_borders, zip_adjacency):
+    """ Produces a set of zip code level borders as close as possible to the
+        given crime borders.
+
+        This is used to compare the crime level borders to the zip code level
+        borders in the census data.
+
+        Vertices in `crime_borders` and `zip_adjacency`must have a zipcode
+        attribute. Edges in `crime_borders` must have a weight attribute.
+
+        :param crime_borders: A set of crime borders to work from.
+        :param zip_adjacency: The adjacency of the desired zip code borders.
+        :return: A structurally similar network to given adjacency network, but
+        with edge weights corresponding to the strength of borders between two zip codes.
+    """
+    zip_borders = zip_adjacency.copy()
+    for border in zip_borders.es:
+        s_zip = zip_adjacency.vs[border.source]['zipcode']
+        source = [v for v in crime_borders.vs if v['zipcode'] == s_zip]
+
+        t_zip = zip_adjacency.vs[border.target]['zipcode']
+        target = [v for v in crime_borders.vs if v['zipcode'] == t_zip]
+
+        paths = crime_borders.shortest_paths(source=source, target=target, weights='weight', mode='ALL')
+
+        average_path = sum(sum(p) for p in paths) / float(sum(len(p) for p in paths))
+        border['weight'] = average_path
+
+    return zip_borders
 
 
 def save_borders(path, filename, region_type, iterations, algorithm):
@@ -610,125 +645,23 @@ def save_borders(path, filename, region_type, iterations, algorithm):
         h.close()
 
 
-def randomized_borders(b, iterations=-1, choose_prob=0.5):
-    """ Randomizes the borders in a border network.
-
-        This changes the given network into a random border network.
-
-        :param b: The border network to randomize.
-        :param iterations: The number of iterations to run the randomization
-        process. If this is -1 (the default) then the process will run for the
-        number of edges in the network.
-        :param choose_prob: The probability of choosing a border to subtract
-        weight from.
-
-        Examples
-        --------
-        >>> import igraph
-        >>> r = igraph.Graph.Read('borders.graphml')
-        >>> b = igraph.Graph.Read('borders.graphml')
-        >>> randomized_borders(r)
-        >>> cc = get_absolute_cross_correlation(b, r)
-    """
-    if iterations == -1:
-        iterations = b.ecount()
-
-    for i in range(iterations):
-        # choose a random vertex
-        v = b.vs[random.randint(1, b.vcount()) - 1]
-
-        # randomly split the incident edges into two groups
-        add = sub = []
-        for e in b.es:
-            if v['zipcode'] != b.vs[e.source]['zipcode'] and \
-               v['zipcode'] != b.vs[e.target]['zipcode']:
-                # this edge does not interest us
-                continue
-            if random.random() < choose_prob:
-                sub.append(e)
-            else:
-                add.append(e)
-
-        to_remove = [random.random() * e['weight'] for e in sub]
-        to_add = sum(to_remove) / len(add)
-
-        # redistribute weight
-        for e, amount in zip(sub, to_remove):
-            e['weight'] -= amount
-        for e in add:
-            e['weight'] += to_add
-
-
-def get_absolute_cross_correlation(a, b):
-    """ Finds the absolute cross correlation between two networks with the same
-        structure.
-
-        The two given networks must have nodes with a zipcode attribute. The
-        zip codes of the source and targets of all edges in a must match those
-        in b.
-
-        :return: The absolute cross correlation between a and b.
-
-        Examples
-        --------
-        >>> import igraph
-        >>> a = igraph.Graph.Read('crimes.graphml')
-        >>> b = igraph.Graph.Read('census.graphml')
-        >>> cc = get_absolute_cross_correlation(a, b)
-    """
-    # each node must have a zipcode attribute
-    # the two networks must have the same structure
-    if a.vcount() != b.vcount():
-        raise AssertionError('a and b do not have the same number of edges!')
-    prod = aprod = bprod = 0.0
-    # find a sortable list of edges for both networks ((zip, zip), w)
-    get_sortable_edge = lambda g, e: (tuple(sorted([g.vs[e.source]['zipcode'],
-                                                    g.vs[e.target]['zipcode']])),
-                                      e['weight'])
-
-    a_es = [get_sortable_edge(a, ae) for ae in a.es]
-    b_es = [get_sortable_edge(b, be) for be in b.es]
-    a_es.sort()
-    b_es.sort()
-    for i in range(len(a_es)):
-        if a_es[i][0] != b_es[i][0]:
-            raise AssertionError('Edges do not match!')
-        prod += a_es[i][1] * b_es[i][1]
-        aprod += a_es[i][1]**2
-        bprod += b_es[i][1]**2
-    return prod / math.sqrt(aprod * bprod)
-
-
 if __name__ == '__main__':
     # write info and debug to different files
     logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
     fiona.log.setLevel(logging.WARNING)  # I don't care about the fiona logs
 
-    month_files = map(lambda args: 'month_{year}-{month:0>2}-{day:0>2}'.format(**args),
-                      multithreading.combinations(year=range(2007, 2011),
-                                                  month=range(1, 13),
-                                                  day=[1]))
-    year_files = map(lambda args: 'year_{year}-{month:0>2}-{day:0>2}'.format(**args),
-                     multithreading.combinations(year=range(2007, 2011),
-                                                 month=[1], day=[1]))
+    week_files = save_networks.week_files(datetime.datetime(2007, 1, 1), datetime.datetime(2011, 1, 1))
+    month_files = save_networks.month_files(range(2007, 2011))
+    year_files = save_networks.year_files(range(2007, 2011))
 
-    # params = multithreading.combinations(city=['los_angeles', 'baltimore', 'miami'],
-    #                                      crime_name=['all', 'theft', 'burglary', 'assault'],
-    #                                      distance=[3.2, 2.4, 1.6, .8, .1],
-    #                                      node_type=['crime', 'zip'],
-    #                                      region_type=['voronoi', 'zip'],
-    #                                      algorithm=['random_walk', 'label_propagation'],
-    #                                      filename=['dec2010', '17dec2010', '30dec2010'],
-    #                                      iterations=[30])
-
-    params = multithreading.combinations(city=['miami'],
-                                         crime_name=['all'],
-                                         distance=[1.6],
+    params = multithreading.combinations(city=['los_angeles', 'baltimore', 'miami'],
+                                         crime_name=['all', 'theft', 'burglary', 'assault'],
+                                         distance=[3.2, 2.4, 1.6, .8, .1],
                                          node_type=['crime', 'zip'],
                                          region_type=['voronoi', 'zip'],
                                          algorithm=['label_propagation'],
-                                         filename=month_files,
-                                         iterations=[1])
+                                         filename=week_files + month_files + year_files,
+                                         iterations=[100])
 
     # filter out bad combinations
     params = filter(lambda d: d['node_type'] == 'crime' and d['region_type'] == 'voronoi' or
@@ -750,12 +683,12 @@ if __name__ == '__main__':
 
         path = 'data/{}/{}/distance/{}/{}'.format(city, crime_name, distance, node_type)
         network = load_network(path, filename)
-        # add_regions(network, path, filename, region_type)
+        add_regions(network, path, filename, region_type)
 
         _ = get_communities(network, iterations, path, filename, algorithm=algorithm)
 
-        # save_borders(path, filename, region_type, iterations, algorithm)
-        #
+        save_borders(path, filename, region_type, iterations, algorithm)
+
         # figure_path = 'output/{}.svg'.format(unique_id)
         # if not os.path.exists(figure_path):
         #     fig = plotting.get_border_fig(path, region_type, algorithm, filename, iterations)
