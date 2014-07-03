@@ -8,6 +8,7 @@ import logging
 import multiprocessing
 import itertools
 import fcntl
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +30,19 @@ class Worker(object):
             :param args: A dictionary of keyword arguments for the work function
             :return: The result of the work function
         """
-        if self.failsafe:
-            try:
+        try:
+            if self.failsafe:
+                try:
+                    return self.do_work(**args)
+                except KeyboardInterrupt as e:
+                    raise e
+                except Exception as e:
+                    logger.exception(e)
+                    return False
+            else:
                 return self.do_work(**args)
-            except KeyboardInterrupt as e:
-                raise e
-            except Exception as e:
-                logger.exception(e)
-                return False
-        else:
-            return self.do_work(**args)
+        finally:
+            gc.collect()
 
 
 def combinations(**kwargs):
