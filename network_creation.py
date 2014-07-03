@@ -130,7 +130,7 @@ def get_graph(attribute_list, is_associated, get_id=None, combination_rules=None
 
         Examples
         --------
-        >>> from windows import crime_window
+        >>> from database import crime_window
         >>> cs = crime_window(max_size=30)
         >>> cs = sorted(cs, key=lambda c: c['date'])
         >>> first = lambda x: x[0]

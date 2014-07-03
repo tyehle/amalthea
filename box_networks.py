@@ -5,7 +5,7 @@ import math
 import multithreading
 import pymongo
 import network_creation
-import windows
+import database
 from random import random
 import json
 from shapely.geometry import shape
@@ -284,7 +284,7 @@ def get_box_network(width, height, x, y, gl_bottom, gl_left, limits, distance, k
     else:
         limits = dict(limits, coordinates={'$within': {'$box': [[left, bottom], [right, top]]}})
     logger.debug('Querying {}'.format(limits))
-    data = windows.normalize_data(crimes.find(limits))
+    data = database.normalize_data(crimes.find(limits))
     data = [d for d in data if random() < keep_frac]  # remove ~ 1-keep_frac from the data
     logger.debug('{} crimes found'.format(len(data)))
     g = network_creation.distance_crime_graph(data, distance)

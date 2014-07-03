@@ -1,7 +1,7 @@
 import datetime
 import json
 import network_creation
-from windows import crime_window, str2date
+from database import crime_window, str2date
 import os.path
 from math import ceil
 import logging.config
