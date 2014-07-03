@@ -9,6 +9,8 @@ import multithreading
 import box_networks
 import igraph
 import glob
+import gc
+import itertools
 
 logger = logging.getLogger(__name__)
 
@@ -275,19 +277,39 @@ def save_dynamic_distance_year_graph(years, area_name, distance, node_type, crim
             logger.info('Building {}'.format(limits))
             g = box_networks.distance_crime_network_by_box(distance, area_name, limits=limits)
             save_graph(g, network_path)
+            gc.collect()
         else:
             logger.info('Network exists, skipping')
         i += 1
+
+
+def year_files(years):
+    return map(lambda args: 'year_{year}-{month:0>2}-{day:0>2}'.format(**args),
+                            multithreading.combinations(year=years, month=[1], day=[1]))
+
+
+def month_files(years, months=range(1, 13)):
+    return map(lambda args: 'month_{year}-{month:0>2}-{day:0>2}'.format(**args),
+                            multithreading.combinations(year=years,
+                                                        month=months,
+                                                        day=[1]))
+
+
+def week_files(start, stop):
+    step = datetime.timedelta(days=7)
+    return ['week_{}'.format(date_string(x)) for x in
+            itertools.takewhile(lambda d: d < stop,
+                                (i*step + start for i in itertools.count()))]
 
 
 if __name__ == '__main__':
     logging.config.dictConfig(json.load(open('logging_config.json', 'r')))
     # logging.basicConfig(level=logging.DEBUG)
 
-    todo = 'collapse'
+    todo = 'year'
 
     areas = ['baltimore', 'los_angeles', 'miami']
-    distances = [0.1, 0.8, 1.6, 2.4, 3.2]
+    _distances = [0.1, 0.8, 1.6, 2.4, 3.2]
     node_types = ['crime']
     _crime_types = [None, ['Theft'], ['Burglary'], ['Assault']]
 
@@ -295,7 +317,7 @@ if __name__ == '__main__':
     if todo == 'month':
         params = multithreading.combinations(years=[range(2007, 2011)],
                                              area_name=areas,
-                                             distance=distances,
+                                             distance=_distances,
                                              node_type=node_types,
                                              crime_types=_crime_types)
         multithreading.map_kwargs(save_dynamic_distance_month_graph, params)
@@ -304,7 +326,7 @@ if __name__ == '__main__':
                                              final=[datetime.datetime(2011, 1, 1)],
                                              delta_name=['week'],
                                              area_name=areas,
-                                             distance=distances,
+                                             distance=_distances,
                                              node_type=node_types,
                                              crime_types=_crime_types)
         logger.info('Generating {} dynamic networks'.format(len(params)))
@@ -313,10 +335,11 @@ if __name__ == '__main__':
     elif todo == 'year':
         params = multithreading.combinations(years=[range(2007, 2011)],
                                              area_name=areas,
-                                             distance=distances,
+                                             distance=_distances,
                                              node_type=node_types,
                                              crime_types=_crime_types)
-        map(lambda args: save_dynamic_distance_year_graph(**args), params)
+        multithreading.map_kwargs(save_dynamic_distance_year_graph, params)
+        # map(lambda args: save_dynamic_distance_year_graph(**args), params)
     elif todo == 'collapse':
         collapse_all_to_zip()
     logger.info('Done!')
