@@ -1,4 +1,4 @@
-__author__ = 'Tobin Yehle'
+__author__ = 'Sarah White'
 
 import matplotlib
 matplotlib.use('Agg')  # this fixes issues when executing over ssh

@@ -1,3 +1,5 @@
+__author__ = 'Sarah White'
+
 from pymongo import MongoClient
 from shapely.geometry import asShape, Polygon
 from unidecode import unidecode
@@ -49,7 +51,8 @@ def crime_window(start_date=None,
         2
 
         >>> from datetime import datetime
-        >>> crimes = crime_window(end_date=datetime(2009, 2, 15), start_date=datetime(2009, 2, 13))
+        >>> crimes = crime_window(end_date=datetime(2009, 2, 15),
+        ...   start_date=datetime(2009, 2, 13))
         >>> len(crimes)
         21669
     """

@@ -1,4 +1,4 @@
-__author__ = 'tobin'
+__author__ = 'Tobin Yehle'
 
 import logging.config
 import math
@@ -65,7 +65,8 @@ def distance_crime_network_by_box(distance, city, box_size=20, limits=None, crim
 
         Examples
         --------
-        >>> g = distance_crime_network_by_box(1.6, 'miami', limits={'type': 'Assault'})
+        >>> g = distance_crime_network_by_box(1.6, 'miami',
+        ...   limits={'type': 'Assault'})
     """
     left, bottom, right, top = get_bounds(city)
     logger.info('distance={}, lon=({} to {}), lat=({} to {})'.format(distance,

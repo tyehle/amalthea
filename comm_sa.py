@@ -1,3 +1,5 @@
+__author__ = 'Sarah White'
+
 import igraph
 from math import exp
 from random import randint, random, sample
@@ -6,9 +8,14 @@ import logging.config
 logger = logging.getLogger(__name__)
 
 def community_sa(g, mod_calc, t0 = 2.5 *10**-4, C = 0.75, f = 0.5):
-    """ Partitions the graph using the SA community detection algorithm proposed in Guimera and Amaral's publication.
+    """ Partitions the graph using the SA community detection algorithm
+        proposed in Guimera and Amaral's publication.
 
-        Assumptions made when implementing the algorithm include randomly selecting the node n for which to locally modify and using a 50% to determine whether a global split or merge is proposed. The splitalgorthim follows the detection algorith exactly. For each T, f * S**2 local changes are made.
+        Assumptions made when implementing the algorithm include randomly
+        selecting the node n for which to locally modify and using a 50% to
+        determine whether a global split or merge is proposed. The
+        splitalgorthim follows the detection algorith exactly.
+        For each T, f * S**2 local changes are made.
 
         Parameters
         ----------
@@ -17,11 +24,14 @@ def community_sa(g, mod_calc, t0 = 2.5 *10**-4, C = 0.75, f = 0.5):
         mod_calc: lambda
             Function indicating which modularity measure to use.
         T0: float
-            The intial temperature. The default is 2.5 * 10**-4, as proposed in Brockman's supplmental materials.
+            The intial temperature. The default is 2.5 * 10**-4, as proposed in
+            Brockman's supplmental materials.
         c: float
-            The cooling factor. The default is c = 0.75, as proposed in Brockman's supplemental materials.
+            The cooling factor. The default is c = 0.75, as proposed in
+            Brockman's supplemental materials.
         f: float
-            The proportional of changes made. The default is 0, as proposed in Brockman's paper.
+            The proportional of changes made. The default is 0, as proposed in
+            Brockman's paper.
 
         Returns
         -------
@@ -98,7 +108,11 @@ def community_sa(g, mod_calc, t0 = 2.5 *10**-4, C = 0.75, f = 0.5):
 def _accept_update(mod_calc, g, pnew, p, t):
     """ Returns boolean as to accept or reject partition update.
 
-        Calculates the probability of a proposed partition being accepted. the probability formula is as follows: if the cost after the update is <= the cost before the update, the parition is accepted with probability one, otherwise the parition is accepted with probability e**(-(Cf - Ci)/t). Note that C = -M.
+        Calculates the probability of a proposed partition being accepted. The
+        probability formula is as follows:
+        if the cost after the update is <= the cost before the update, the
+        parition is accepted with probability one, otherwise the parition is
+        accepted with probability e**(-(Cf - Ci)/t). Note that C = -M.
 
         Parameters
         ----------
@@ -193,7 +207,11 @@ def _merge_update(mem_list):
 def _split_update(p, m, t0, tcurr, S, C, f, mod_calc):
     """ Peforms a split update given a partition.
 
-        This method uses a simplified version of the overall SA community detection algorithm. Until the original time has been cooled to thecurrent time of the overall algorithm, a sub graph of the module of interest is modified using local changes. the sub graph is initialized with two randomly assigned partitions.
+        This method uses a simplified version of the overall SA community
+        detection algorithm. Until the original time has been cooled to
+        the current time of the overall algorithm, a sub graph of the module
+        of interest is modified using local changes. the sub graph is
+        initialized with two randomly assigned partitions.
 
         Parameters
         ----------
@@ -208,9 +226,11 @@ def _split_update(p, m, t0, tcurr, S, C, f, mod_calc):
         S: int
             Number of nodes in the graph of interest.
         c: float
-            The cooling factor. the default is c = 0.75, as proposed in Brockman's supplemental materials.
+            The cooling factor. the default is c = 0.75, as proposed in
+            Brockman's supplemental materials.
         f: float
-            The proportional of changes made. the default is 0.5 as proposed in Brockman's paper.
+            The proportional of changes made. the default is 0.5 as proposed in
+            Brockman's paper.
         mod_calc: lambda
             Function indicating which modularity measure to use.
 
@@ -248,7 +268,15 @@ def _split_update(p, m, t0, tcurr, S, C, f, mod_calc):
 def modularity_weights(p_list, g):
     """ Calculates the modularity of a partition of g.
 
-        Uses the constraints implied in the publication as well as constraints necessary to partition a graph that is disconnnected. the given constraints include: returning a modularity of one to paritions of a single modules containing a single isolated node, returning a modularity of zero to partitions of multiple isolated modules, incrementing the modularity by 1/# of modules for a module that contains a single isolatednode. Otherwise, the modularity is calculated as proposed in equation 1. This modularity calculation takes into respect the weights of the edges.
+        Uses the constraints implied in the publication as well as constraints
+        necessary to partition a graph that is disconnnected. the given
+        constraints include: returning a modularity of one to paritions of a
+        single modules containing a single isolated node, returning a
+        modularity of zero to partitions of multiple isolated modules,
+        incrementing the modularity by 1/# of modules for a module that
+        contains a single isolatednode. Otherwise, the modularity is calculated
+        as proposed in equation 1. This modularity calculation takes into
+        respect the weights of the edges.
 
         Parameters
         ----------
@@ -294,11 +322,20 @@ def modularity_weights(p_list, g):
 
 
 def modularity(p_list, g):
-    """ Calculates the modularity of a partition of g without accouting for edge weight.
+    """ Calculates the modularity of a partition of g without accouting for
+        edge weight.
 
-        Uses the constraints implied in the publication as well as constraints necessary to partition a graph that is disconnnected. the given constraints include: returning a modularity of one to paritions of a single modules containing a single isolated node, returning a modularity of zero to partitions of multiple isolated modules, incrementing the modularity by 1/# of modules for a module that contains a single isolatednode. Otherwise, the modularity is calculated as proposed in equation 1.
+        Uses the constraints implied in the publication as well as constraints
+        necessary to partition a graph that is disconnnected. the given
+        constraints include: returning a modularity of one to paritions of a
+        single modules containing a single isolated node, returning a
+        modularity of zero to partitions of multiple isolated modules,
+        incrementing the modularity by 1/# of modules for a module that
+        contains a single isolatednode. Otherwise, the modularity is calculated
+        as proposed in equation 1.
 
-        Note: This modularity calculation is much faster than modularity_weights but is less accurate.
+        Note: This modularity calculation is much faster than
+        modularity_weights but is less accurate.
 
         Parameters
         ----------

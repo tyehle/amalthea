@@ -1,3 +1,5 @@
+__author__ = 'Tobin Yehle'
+
 import logging.config
 import math
 import random

@@ -2,7 +2,7 @@
 Contains some convenience methods for multithreading jobs.
 """
 
-__author__ = 'tobin'
+__author__ = 'Tobin Yehle'
 
 import logging
 import multiprocessing
@@ -54,7 +54,8 @@ def combinations(**kwargs):
 
         Examples
         --------
-        >>> names = combinations(first_name=['Tom', 'Jim'],last_name=['Smith', 'Glenn'])
+        >>> names = combinations(first_name=['Tom', 'Jim'],
+        ...   last_name=['Smith', 'Glenn'])
         >>> len(names)
         4
         >>> {'first_name': 'Jim', 'last_name': 'Smith'} in names
@@ -82,7 +83,8 @@ def map_kwargs(func, items, failsafe=False):
         --------
         >>> def f(first_name, last_name):
         ...   return last_name+', '+first_name
-        >>> names = combinations(first_name=['Tom', 'Jim'],last_name=['Smith', 'Glenn'])
+        >>> names = combinations(first_name=['Tom', 'Jim'],
+        ...   last_name=['Smith', 'Glenn'])
         >>> all_names = map_kwargs(f, names)
         >>> len(all_names)
         4

@@ -490,7 +490,8 @@ def get_border_network(path, filename, region_type, algorithm, iterations):
         :param filename: The filename of the network of crimes.
         :param region_type: The type of regions around each vertex.
         :param algorithm: The community detection algorithm to use.
-        :param iterations: The number of runs of the community detection algorithm.
+        :param iterations: The number of runs of the community detection
+        algorithm.
         :return: An `igraph.Graph` object where the weights of edges between
         two vertices represent the strength of a border between them.
 
@@ -498,7 +499,8 @@ def get_border_network(path, filename, region_type, algorithm, iterations):
         --------
         >>> path = 'data/testing'
         >>> filename = 'test'
-        >>> bn = get_border_network(path, filename, 'voronoi', 'label_propagation', 30)
+        >>> bn = get_border_network(path, filename, 'voronoi',
+        ...   'label_propagation', 30)
         >>> bn.write_graphml('{}/borders/{}.graphml'.format(path, filename))
     """
     border_path = os.path.join(path, 'borders', region_type, algorithm,
@@ -592,7 +594,8 @@ def save_borders(path, filename, region_type, iterations, algorithm):
         :param path: The base path to the network of crimes.
         :param filename: The filename of the crimes network.
         :param region_type: The type of region surrounding each vertex.
-        :param iterations: The number of iterations of the community detection algorithm.
+        :param iterations: The number of iterations of the community detection
+        algorithm.
         :param algorithm: The community detection algorithm to use.
 
         Examples
@@ -602,7 +605,8 @@ def save_borders(path, filename, region_type, iterations, algorithm):
         >>> filename = 'test'
         >>> iterations = 30
         >>> save_borders(path, filename, 'zip', iterations, 'random_walk')
-        >>> fig = plotting.get_border_fig('{}/borders/{}_{}'.format(path, filename, iterations))
+        >>> fig = plotting.get_border_fig('{}/borders/{}_{}'.format(path,
+        ...   filename, iterations))
         >>> fig.savefig('test.svg')
     """
     borders_path = os.path.join(path, 'borders', region_type, algorithm,

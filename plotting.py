@@ -1,4 +1,4 @@
-__author__ = 'tobin'
+__author__ = 'Tobin Yehle'
 
 import matplotlib
 matplotlib.use('Agg')  # this fixes issues when executing over ssh
@@ -171,9 +171,11 @@ def get_census_fig(city, linkage, lev):
 
 
 def get_census_borders_fig(city, borders_path, region_type, algorithm, filename, iterations, linkage, lev):
-    """ Plots network borderse from a shapefile overlaying zip code clusters from a shapefile.
+    """ Plots network borderse from a shapefile overlaying zip code clusters
+        from a shapefile.
 
-        :return: A figure with the clusters colored accordingly and overlaying crime borders.
+        :return: A figure with the clusters colored accordingly and overlaying
+        crime borders.
     """
     logger.info('Plotting begin.')
     border_path = '{}/borders/{}/{}/{}_{}'.format(city, borders_path,

@@ -1,3 +1,5 @@
+__author__ = 'Sarah White'
+
 import os
 import csv
 import json
@@ -21,7 +23,8 @@ def retrieve_census(area_name,
                     cols = [[33, 237, 241, 321], 
                            [37, 247, 297, 289, 513], 
                            [13, 185]]):
-    """ Reads census data from files for variables of interest. Outputs a dictionary of features by zip code and a dictionary of variables.
+    """ Reads census data from files for variables of interest. Outputs a
+        dictionary of features by zip code and a dictionary of variables.
     """
     features = dict()
     var_names = []
@@ -67,7 +70,8 @@ def retrieve_census(area_name,
 
 
 def cluster_zips(area_features, linkage, t, return_dist = False):
-    """ Clusters zip codes using a hierachial method with euclidean distance and the inputted feature vector.
+    """ Clusters zip codes using a hierachial method with euclidean distance
+        and the inputted feature vector.
     """
     if type(area_features) == str:
         features = json.load(open('data/{}/census/features.json'.format(area_features), 'r'))

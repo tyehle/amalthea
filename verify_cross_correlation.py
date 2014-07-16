@@ -1,3 +1,5 @@
+__author__ = 'Tobin Yehle'
+
 import logging
 import compare_borders
 import matplotlib.pyplot as plt

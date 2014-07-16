@@ -1,3 +1,5 @@
+__author__ = 'Tobin Yehle'
+
 import pymongo
 import igraph
 import math
@@ -87,8 +89,8 @@ def get_graph(attribute_list, is_associated, get_id=None, combination_rules=None
     """ Builds a graph from a list of crimes with edges and nodes based on the
         given rules.
 
-        The generated graph uses the data from `attribute_list` to generate nodes.
-        An edge between two nodes has a weight equal to the number of
+        The generated graph uses the data from `attribute_list` to generate
+        nodes. An edge between two nodes has a weight equal to the number of
         associated crimes in the two nodes.
 
         Parameters
@@ -119,8 +121,8 @@ def get_graph(attribute_list, is_associated, get_id=None, combination_rules=None
         Returns
         -------
         graph : igraph.Graph
-            A graph constructed using the data in `attribute_list` and the rules
-            defined by the other parameters.
+            A graph constructed using the data in `attribute_list` and the
+            rules defined by the other parameters.
 
         Notes
         -----
@@ -143,10 +145,7 @@ def get_graph(attribute_list, is_associated, get_id=None, combination_rules=None
         <class 'igraph.Graph'>
         >>> mean = lambda x: sum(x)/float(len(x))
         >>> dist_g = get_graph(cs,
-        ...                    lambda a, b: v_distance(float(a['latitude']),
-        ...                                            float(a['longitude']),
-        ...                                            float(b['latitude']),
-        ...                                            float(b['longitude'])) < 100,
+        ...                    lambda a, b: within_distance(a, b, 100),
         ...                    lambda c : c['type'],
         ...                    {'type': first,
         ...                     'latitude': mean,

@@ -1,3 +1,5 @@
+__author__ = 'Sarah White'
+
 import datetime
 import json
 import network_creation
@@ -137,7 +139,8 @@ def save_dynamic_distance_delta_graph(initial, final, delta_name, area_name,
         distance: float
             Maximum distance between linked crimes.
         node_type: String
-            What each node in the network represents. Should be one of 'zip' or 'crime'.
+            What each node in the network represents. Should be one of 'zip' or
+            'crime'.
         crime_types: list
             An optional additional parameter passed to `crime_window`
 
@@ -153,7 +156,8 @@ def save_dynamic_distance_delta_graph(initial, final, delta_name, area_name,
         >>> initial = datetime(2010, 1, 1)
         >>> final = datetime(2010, 1, 8)
         >>> delta = timedelta(days=1)
-        >>> save_dynamic_distance_delta_graph(initial, final, delta, 'baltimore', 1.6, 'zip')
+        >>> save_dynamic_distance_delta_graph(initial, final, delta,
+        ...   'baltimore', 1.6, 'zip')
     """
     path = 'data/{}/{}/distance/{}/{}'.format(area_name, get_crime_name(crime_types),
                                               distance, node_type)
@@ -213,7 +217,8 @@ def save_dynamic_distance_month_graph(years, area_name, distance, node_type, cri
 
         Examples
         --------
-        >>> save_dynamic_distance_month_graph([2008, 2009], 'miami', 1.6, 'crime', ['Theft'])
+        >>> save_dynamic_distance_month_graph([2008, 2009], 'miami', 1.6,
+        ...   'crime', ['Theft'])
     """
     start_times = map(lambda args: datetime.datetime(**args),
                       multithreading.combinations(month=range(1, 13), year=years, day=[1]))
@@ -254,7 +259,8 @@ def save_dynamic_distance_year_graph(years, area_name, distance, node_type, crim
 
         Examples
         --------
-        >>> save_dynamic_distance_year_graph([2008, 2009], 'miami', 1.6, 'crime', ['Theft'])
+        >>> save_dynamic_distance_year_graph([2008, 2009], 'miami', 1.6,
+        ...   'crime', ['Theft'])
     """
     start_times = map(lambda args: datetime.datetime(**args),
                       multithreading.combinations(month=[1], year=years, day=[1]))
